@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"ntd/backend/services"
+	"ecommerce/backend/services"
 )
 
 type PurchaseRequest struct {

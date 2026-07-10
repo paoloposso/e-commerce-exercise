@@ -1,4 +1,4 @@
-# NTD E-Commerce Application
+# E-Commerce Application
 
 A fully decoupled, hyper-optimized E-Commerce platform built with **Go** and **React (Vite)**. It uses a **Single-Binary Deployment** model, meaning the frontend UI is baked directly into the backend server for a frictionless single-container deployment!
 
@@ -20,15 +20,22 @@ This single command will:
 2. Compile the Go backend (embedding the React UI inside it).
 3. Start the server at `http://localhost:8080/`.
 
-### 2. Seed the Database
+### 2. Navigate the Application
+Open your browser and navigate to **http://localhost:8080/**. The frontend emulates a clean separation of concern via three tabs:
 
-To seed the database:
-1. Go to **http://localhost:8080/** in your browser.
-2. Click **"Upload CSV"** in the top right corner.
-3. Select the `backend/data/products_example.csv` file from this repository.
+#### 🛍️ Shop View (Customer)
+- **Browse & Search:** Search the product catalog dynamically using the search input in the header.
+- **Purchase Products:** Use the quantity steppers (`+` / `-`) on any card and click **Buy Now** to trigger checkout (processed instantly via a mock billing broker using concurrency-safe optimistic locking).
 
-### 3. Open the App
-You can browse the catalog and click **Buy Now** to simulate checkouts!
+#### 🗂️ Inventory View (Administrator)
+- **Bulk CSV Import:** Click **Upload CSV** in the header and select `backend/data/products_example.csv` to populate the database.
+- **Manual Product CRUD:**
+  - Click **+ Add Product** to create a product. The price field uses a **currency mask** (typing digits automatically formats cents, e.g. `4599` displays as `45.99`, so you don't need to type `.`).
+  - Validation errors (e.g. negative price, invalid SKU characters, blank name) display directly as **inline custom warnings** below each input.
+  - Click **Edit** (✏️) or **Delete** (🗑️) on any product card to update details or purge products.
+
+#### 📜 Order History View (Ledger/Audit)
+- Inspect all simulated transaction records (date, order UUID, customer token, SKU, quantity, and total price).
 
 ---
 

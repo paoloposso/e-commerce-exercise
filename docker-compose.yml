@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ntd-backend
+    container_name: ecommerce-backend
     ports:
       - "8080:8080"
     environment:

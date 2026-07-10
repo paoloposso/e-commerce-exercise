@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"ntd/backend/models"
+	"ecommerce/backend/models"
 )
 
 type OrderRepository interface {

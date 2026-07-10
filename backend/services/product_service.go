@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"ntd/backend/models"
+	"ecommerce/backend/models"
 )
 
 var (

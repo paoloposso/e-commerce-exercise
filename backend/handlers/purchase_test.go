@@ -9,10 +9,10 @@ import (
 	"os"
 	"testing"
 
-	"ntd/backend/models"
-	"ntd/backend/payment"
-	"ntd/backend/repository"
-	"ntd/backend/services"
+	"ecommerce/backend/models"
+	"ecommerce/backend/payment"
+	"ecommerce/backend/repository"
+	"ecommerce/backend/services"
 )
 
 type mockOrderService struct {

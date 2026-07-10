@@ -4,7 +4,7 @@ export function Header({ store }: { store: any }) {
       <div className="container header-content">
         <div className="logo-section">
           <div className="logo-mark">⚡</div>
-          <h1>NTD Store</h1>
+          <h1>Store</h1>
         </div>
         
         <div className="nav-tabs">

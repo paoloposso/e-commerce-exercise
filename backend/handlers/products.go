@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"ntd/backend/models"
-	"ntd/backend/services"
+	"ecommerce/backend/models"
+	"ecommerce/backend/services"
 )
 
 type ProductHandler struct {

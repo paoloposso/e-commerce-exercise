@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"ntd/backend/models"
+	"ecommerce/backend/models"
 )
 
 type SQLiteProductRepository struct {

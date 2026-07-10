@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 
-	"ntd/backend/handlers"
-	"ntd/backend/payment"
-	"ntd/backend/repository"
-	"ntd/backend/services"
+	"ecommerce/backend/handlers"
+	"ecommerce/backend/payment"
+	"ecommerce/backend/repository"
+	"ecommerce/backend/services"
 )
 
 //go:embed all:dist

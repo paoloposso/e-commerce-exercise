@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"ntd/backend/models"
-	"ntd/backend/services"
+	"ecommerce/backend/models"
+	"ecommerce/backend/services"
 )
 
 type mockProductService struct {

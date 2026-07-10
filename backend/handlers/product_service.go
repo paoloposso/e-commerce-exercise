@@ -4,8 +4,8 @@ import (
 	"context"
 	"io"
 
-	"ntd/backend/models"
-	"ntd/backend/services"
+	"ecommerce/backend/models"
+	"ecommerce/backend/services"
 )
 
 type ProductService interface {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"ntd/backend/models"
+	"ecommerce/backend/models"
 )
 
 type RowError struct {

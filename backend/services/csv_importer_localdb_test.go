@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"ntd/backend/repository"
+	"ecommerce/backend/repository"
 )
 
 func TestImportProductsFromCSV_Integration(t *testing.T) {

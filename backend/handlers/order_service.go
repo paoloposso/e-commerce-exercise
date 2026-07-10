@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 
-	"ntd/backend/models"
+	"ecommerce/backend/models"
 )
 
 type OrderService interface {

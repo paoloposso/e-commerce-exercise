@@ -1,4 +1,4 @@
-module ntd/backend
+module ecommerce/backend
 
 go 1.22
 

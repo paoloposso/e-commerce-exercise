@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"ntd/backend/models"
+	"ecommerce/backend/models"
 )
 
 type mockImporterRepository struct {

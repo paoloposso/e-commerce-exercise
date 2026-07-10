@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"ntd/backend/models"
-	"ntd/backend/payment"
+	"ecommerce/backend/models"
+	"ecommerce/backend/payment"
 )
 
 const maxPurchaseRetries = 3
