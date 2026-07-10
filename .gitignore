@@ -13,9 +13,5 @@ frontend/node_modules/
 frontend/dist/
 backend/cmd/api/dist/
 
-# Agent customizations
-.agents
-AGENT.md
-
 # Local scripts and scratch directories
 scripts/
