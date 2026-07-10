@@ -1,0 +1,250 @@
+package services
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/csv"
+	"errors"
+	"fmt"
+	"html"
+	"io"
+	"log"
+	"strconv"
+	"strings"
+	"time"
+
+	"ntd/backend/models"
+)
+
+// RowError captures validation errors for specific rows in the CSV.
+type RowError struct {
+	RowNumber int    `json:"row_number"`
+	SKU       string `json:"sku,omitempty"`
+	Error     string `json:"error"`
+}
+
+// ImportReport summarizes the results of the CSV import process.
+type ImportReport struct {
+	TotalRows    int        `json:"total_rows"`
+	ImportedRows int        `json:"imported_rows"`
+	UpdatedRows  int        `json:"updated_rows"`
+	Errors       []RowError `json:"errors"`
+}
+
+// GenerateUUID generates a pseudo-UUIDv4 using crypto/rand.
+func GenerateUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// ImportProductsFromCSV parses the CSV reader, validates row-by-row, and upserts products using the repository.
+func ImportProductsFromCSV(reader io.Reader, repo ProductImporterStore) (*ImportReport, error) {
+	csvReader := csv.NewReader(reader)
+	csvReader.LazyQuotes = true
+
+	header, err := csvReader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV header: %w", err)
+	}
+
+	headerMap := make(map[string]int)
+	for i, h := range header {
+		headerMap[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+
+	required := []string{"name", "sku", "description", "category", "price", "stock", "weight_kg"}
+	for _, req := range required {
+		if _, exists := headerMap[req]; !exists {
+			return nil, fmt.Errorf("missing required header field: %s", req)
+		}
+	}
+
+	report := &ImportReport{
+		Errors: []RowError{},
+	}
+
+	rowNum := 1
+	for {
+		record, err := csvReader.Read()
+		if err == io.EOF {
+			break
+		}
+		rowNum++
+		if err != nil {
+			if errors.Is(err, csv.ErrFieldCount) && len(record) == 1 && strings.TrimSpace(record[0]) == "" {
+				continue
+			}
+			report.Errors = append(report.Errors, RowError{
+				RowNumber: rowNum,
+				Error:     fmt.Sprintf("Failed to read row structure: %v", err),
+			})
+			continue
+		}
+
+		report.TotalRows++
+
+		isEmpty := true
+		for _, val := range record {
+			if strings.TrimSpace(val) != "" {
+				isEmpty = false
+				break
+			}
+		}
+		if isEmpty {
+			report.TotalRows--
+			continue
+		}
+
+		skuVal := strings.TrimSpace(record[headerMap["sku"]])
+		nameVal := strings.TrimSpace(record[headerMap["name"]])
+		descVal := strings.TrimSpace(record[headerMap["description"]])
+		catVal := strings.TrimSpace(record[headerMap["category"]])
+		priceVal := strings.TrimSpace(record[headerMap["price"]])
+		stockVal := strings.TrimSpace(record[headerMap["stock"]])
+		weightVal := strings.TrimSpace(record[headerMap["weight_kg"]])
+
+		if skuVal == "" {
+			report.Errors = append(report.Errors, RowError{
+				RowNumber: rowNum,
+				Error:     "SKU is a required field and cannot be empty",
+			})
+			continue
+		}
+
+		if nameVal == "" {
+			report.Errors = append(report.Errors, RowError{
+				RowNumber: rowNum,
+				SKU:       skuVal,
+				Error:     "Product Name is required and cannot be empty or only whitespace",
+			})
+			continue
+		}
+		nameVal = html.EscapeString(nameVal)
+
+		descVal = html.EscapeString(descVal)
+
+		cleanPriceVal := strings.ReplaceAll(priceVal, "$", "")
+		cleanPriceVal = strings.TrimSpace(cleanPriceVal)
+
+		var price float64
+		if strings.ToLower(cleanPriceVal) == "free" {
+			price = 0.0
+		} else {
+			p, err := strconv.ParseFloat(cleanPriceVal, 64)
+			if err != nil {
+				report.Errors = append(report.Errors, RowError{
+					RowNumber: rowNum,
+					SKU:       skuVal,
+					Error:     fmt.Sprintf("Invalid price format '%s'", priceVal),
+				})
+				continue
+			}
+			if p < 0 {
+				report.Errors = append(report.Errors, RowError{
+					RowNumber: rowNum,
+					SKU:       skuVal,
+					Error:     fmt.Sprintf("Price cannot be negative: %f", p),
+				})
+				continue
+			}
+			price = p
+		}
+
+		var stock int
+		s, err := strconv.Atoi(stockVal)
+		if err != nil {
+			report.Errors = append(report.Errors, RowError{
+				RowNumber: rowNum,
+				SKU:       skuVal,
+				Error:     fmt.Sprintf("Invalid stock format '%s'", stockVal),
+			})
+			continue
+		}
+		if s < 0 {
+			report.Errors = append(report.Errors, RowError{
+				RowNumber: rowNum,
+				SKU:       skuVal,
+				Error:     fmt.Sprintf("Stock quantity cannot be negative: %d", s),
+			})
+			continue
+		}
+		stock = s
+
+		var weight float64
+		if weightVal != "" {
+			w, err := strconv.ParseFloat(weightVal, 64)
+			if err != nil {
+				report.Errors = append(report.Errors, RowError{
+					RowNumber: rowNum,
+					SKU:       skuVal,
+					Error:     fmt.Sprintf("Invalid weight format '%s'", weightVal),
+				})
+				continue
+			}
+			if w < 0 {
+				report.Errors = append(report.Errors, RowError{
+					RowNumber: rowNum,
+					SKU:       skuVal,
+					Error:     fmt.Sprintf("Weight cannot be negative: %f", w),
+				})
+				continue
+			}
+			weight = w
+		} else {
+			weight = 0.0
+		}
+
+		product := models.Product{
+			Name:        nameVal,
+			SKU:         skuVal,
+			Description: descVal,
+			Category:    catVal,
+			Price:       price,
+			Stock:       stock,
+			WeightKg:    weight,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		existingProduct, err := repo.GetBySKU(ctx, product.SKU)
+		if err != nil {
+			report.Errors = append(report.Errors, RowError{
+				RowNumber: rowNum,
+				SKU:       skuVal,
+				Error:     fmt.Sprintf("Database query failed: %v", err),
+			})
+			continue
+		}
+
+		if existingProduct == nil {
+			err = repo.Create(ctx, &product)
+			if err != nil {
+				report.Errors = append(report.Errors, RowError{
+					RowNumber: rowNum,
+					SKU:       skuVal,
+					Error:     fmt.Sprintf("Database insert failed: %v", err),
+				})
+				continue
+			}
+			report.ImportedRows++
+		} else {
+			err = repo.Update(ctx, existingProduct.ID, &product)
+			if err != nil {
+				report.Errors = append(report.Errors, RowError{
+					RowNumber: rowNum,
+					SKU:       skuVal,
+					Error:     fmt.Sprintf("Database update failed: %v", err),
+				})
+				continue
+			}
+			report.UpdatedRows++
+		}
+	}
+
+	log.Printf("CSV Import completed. Total rows: %d, Imported: %d, Updated: %d, Errors: %d",
+		report.TotalRows, report.ImportedRows, report.UpdatedRows, len(report.Errors))
+
+	return report, nil
+}

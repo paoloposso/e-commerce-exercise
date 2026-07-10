@@ -1,0 +1,65 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"time"
+
+	"ntd/backend/services"
+)
+
+// PurchaseRequest represents a checkout request body sent by the client.
+type PurchaseRequest struct {
+	SKU            string `json:"sku"`
+	CustomerID     string `json:"customer_id"`
+	Quantity       int    `json:"quantity"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// OrderHandler coordinates HTTP routing for the checkout domain.
+type OrderHandler struct {
+	service OrderService
+}
+
+// NewOrderHandler creates a new OrderHandler with the given OrderService.
+func NewOrderHandler(service OrderService) *OrderHandler {
+	return &OrderHandler{service: service}
+}
+
+// PurchaseProduct handles product checkout requests.
+func (h *OrderHandler) PurchaseProduct(w http.ResponseWriter, r *http.Request) {
+	var req PurchaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid JSON request body")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	order, err := h.service.PurchaseProduct(ctx, req.SKU, req.CustomerID, req.IdempotencyKey, req.Quantity)
+	if err != nil {
+		if errors.Is(err, services.ErrInvalidInput) || errors.Is(err, services.ErrInsufficientStock) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrNotFound) {
+			writeJSONError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrPaymentDeclined) {
+			writeJSONError(w, http.StatusPaymentRequired, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrConcurrencyConflict) {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, order)
+}
