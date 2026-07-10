@@ -21,16 +21,14 @@ This single command will:
 3. Start the server at `http://localhost:8080/`.
 
 ### 2. Seed the Database
-We deleted the redundant Command-Line seeder because the React UI handles this natively!
 
 To seed the database:
 1. Go to **http://localhost:8080/** in your browser.
 2. Click **"Upload CSV"** in the top right corner.
 3. Select the `backend/data/products_example.csv` file from this repository.
-4. Watch the products instantly populate the screen!
 
 ### 3. Open the App
-You can now browse the catalog and click **Buy Now** to simulate checkouts!
+You can browse the catalog and click **Buy Now** to simulate checkouts!
 
 ---
 
