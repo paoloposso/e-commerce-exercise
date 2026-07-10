@@ -17,7 +17,6 @@ import (
 //go:embed all:dist
 var frontendAssets embed.FS
 
-// corsMiddleware enables cross-origin requests from local development clients.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -69,6 +68,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/products/{id}", productHandler.DeleteProduct)
 	mux.HandleFunc("POST /api/products/import", productHandler.ImportProducts)
 	mux.HandleFunc("POST /api/purchase", orderHandler.PurchaseProduct)
+	mux.HandleFunc("GET /api/orders", orderHandler.ListOrders)
 
 	distFS, err := fs.Sub(frontendAssets, "dist")
 	if err == nil {

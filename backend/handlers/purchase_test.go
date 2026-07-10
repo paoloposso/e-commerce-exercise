@@ -16,11 +16,11 @@ import (
 )
 
 type mockOrderService struct {
-	purchaseFn func(ctx context.Context, sku, customerID, idempotencyKey string, quantity int) (*models.Order, error)
+	purchaseFn func(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error)
 }
 
-func (m *mockOrderService) PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int) (*models.Order, error) {
-	return m.purchaseFn(ctx, sku, customerID, idempotencyKey, quantity)
+func (m *mockOrderService) PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
+	return m.purchaseFn(ctx, sku, customerID, idempotencyKey, quantity, expectedPrice)
 }
 
 func TestPurchaseProduct_Integration(t *testing.T) {
@@ -58,6 +58,7 @@ func TestPurchaseProduct_Integration(t *testing.T) {
 		SKU:            "SKU-TEST-1",
 		CustomerID:     "customer-uuid-001",
 		Quantity:       2,
+		ExpectedPrice:  25.50,
 		IdempotencyKey: "idem-key-001",
 	}
 	bodyJSON, _ := json.Marshal(reqBody)
@@ -116,7 +117,7 @@ func TestPurchaseProduct_Integration(t *testing.T) {
 		t.Errorf("Idempotent replay: expected stock to remain 1, got %d", remainingStock)
 	}
 
-	reqBodyExceed := PurchaseRequest{SKU: "SKU-TEST-1", CustomerID: "customer-uuid-001", Quantity: 2, IdempotencyKey: "idem-key-002"}
+	reqBodyExceed := PurchaseRequest{SKU: "SKU-TEST-1", CustomerID: "customer-uuid-001", Quantity: 2, ExpectedPrice: 25.50, IdempotencyKey: "idem-key-002"}
 	bodyJSONExceed, _ := json.Marshal(reqBodyExceed)
 	reqExceed, _ := http.NewRequest("POST", "/api/purchase", bytes.NewBuffer(bodyJSONExceed))
 	rrExceed := httptest.NewRecorder()
@@ -127,7 +128,7 @@ func TestPurchaseProduct_Integration(t *testing.T) {
 		t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, rrExceed.Code)
 	}
 
-	reqBodyNoKey := PurchaseRequest{SKU: "SKU-TEST-1", CustomerID: "customer-uuid-001", Quantity: 1}
+	reqBodyNoKey := PurchaseRequest{SKU: "SKU-TEST-1", CustomerID: "customer-uuid-001", Quantity: 1, ExpectedPrice: 25.50}
 	bodyJSONNoKey, _ := json.Marshal(reqBodyNoKey)
 	reqNoKey, _ := http.NewRequest("POST", "/api/purchase", bytes.NewBuffer(bodyJSONNoKey))
 	rrNoKey := httptest.NewRecorder()

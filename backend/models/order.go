@@ -2,7 +2,6 @@ package models
 
 import "time"
 
-// Order represents a completed order purchase record in SQLite database.
 type Order struct {
 	ID             string    `json:"id"`
 	CustomerID     string    `json:"customer_id"`

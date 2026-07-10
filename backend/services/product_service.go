@@ -2,10 +2,10 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"ntd/backend/models"
@@ -18,31 +18,33 @@ var (
 	ErrInsufficientStock = errors.New("insufficient stock available")
 )
 
-// ProductService encapsulates catalog business validations and CSV import.
 type ProductService struct {
 	repo ProductRepository
 }
 
-// NewProductService creates a new ProductService with the given repository.
 func NewProductService(repo ProductRepository) *ProductService {
 	return &ProductService{repo: repo}
 }
 
-// ListProducts queries the catalog filtering by search terms or categories.
 func (s *ProductService) ListProducts(ctx context.Context, query, category string) ([]models.Product, error) {
 	return s.repo.List(ctx, query, category)
 }
 
-// CreateProduct validates and persists a new product.
-func (s *ProductService) CreateProduct(ctx context.Context, p *models.Product) error {
-	p.SKU = strings.TrimSpace(p.SKU)
-	p.Name = strings.TrimSpace(p.Name)
+func (s *ProductService) ImportProducts(ctx context.Context, reader io.Reader) (*ImportReport, error) {
+	return ImportProductsFromCSV(ctx, reader, s.repo)
+}
 
-	if p.SKU == "" {
+var skuRegex = regexp.MustCompile(`^[a-zA-Z0-9-_]+$`)
+
+func validateProduct(p *models.Product) error {
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("%w: product name is required", ErrInvalidInput)
+	}
+	if strings.TrimSpace(p.SKU) == "" {
 		return fmt.Errorf("%w: SKU is required", ErrInvalidInput)
 	}
-	if p.Name == "" {
-		return fmt.Errorf("%w: product name is required", ErrInvalidInput)
+	if !skuRegex.MatchString(strings.TrimSpace(p.SKU)) {
+		return fmt.Errorf("%w: SKU can only contain alphanumeric characters, hyphens, and underscores", ErrInvalidInput)
 	}
 	if p.Price < 0 {
 		return fmt.Errorf("%w: price cannot be negative", ErrInvalidInput)
@@ -53,6 +55,17 @@ func (s *ProductService) CreateProduct(ctx context.Context, p *models.Product) e
 	if p.WeightKg < 0 {
 		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidInput)
 	}
+	return nil
+}
+
+func (s *ProductService) CreateProduct(ctx context.Context, p *models.Product) error {
+	if err := validateProduct(p); err != nil {
+		return err
+	}
+	p.Name = strings.TrimSpace(p.Name)
+	p.SKU = strings.TrimSpace(p.SKU)
+	p.Category = strings.TrimSpace(p.Category)
+	p.Description = strings.TrimSpace(p.Description)
 
 	existing, err := s.repo.GetBySKU(ctx, p.SKU)
 	if err != nil {
@@ -61,34 +74,17 @@ func (s *ProductService) CreateProduct(ctx context.Context, p *models.Product) e
 	if existing != nil {
 		return ErrSKUDuplicate
 	}
-
-	p.ID = GenerateUUID()
 	return s.repo.Create(ctx, p)
 }
 
-// UpdateProduct validates and applies changes to an existing product.
 func (s *ProductService) UpdateProduct(ctx context.Context, id string, p *models.Product) error {
-	p.SKU = strings.TrimSpace(p.SKU)
+	if err := validateProduct(p); err != nil {
+		return err
+	}
 	p.Name = strings.TrimSpace(p.Name)
-
-	if id == "" {
-		return fmt.Errorf("%w: product ID is required", ErrInvalidInput)
-	}
-	if p.SKU == "" {
-		return fmt.Errorf("%w: SKU is required", ErrInvalidInput)
-	}
-	if p.Name == "" {
-		return fmt.Errorf("%w: product name is required", ErrInvalidInput)
-	}
-	if p.Price < 0 {
-		return fmt.Errorf("%w: price cannot be negative", ErrInvalidInput)
-	}
-	if p.Stock < 0 {
-		return fmt.Errorf("%w: stock cannot be negative", ErrInvalidInput)
-	}
-	if p.WeightKg < 0 {
-		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidInput)
-	}
+	p.SKU = strings.TrimSpace(p.SKU)
+	p.Category = strings.TrimSpace(p.Category)
+	p.Description = strings.TrimSpace(p.Description)
 
 	existing, err := s.repo.GetBySKU(ctx, p.SKU)
 	if err != nil {
@@ -97,34 +93,9 @@ func (s *ProductService) UpdateProduct(ctx context.Context, id string, p *models
 	if existing != nil && existing.ID != id {
 		return ErrSKUDuplicate
 	}
-
-	err = s.repo.Update(ctx, id, p)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return err
-	}
-	return nil
+	return s.repo.Update(ctx, id, p)
 }
 
-// DeleteProduct removes a catalog product by its unique ID.
 func (s *ProductService) DeleteProduct(ctx context.Context, id string) error {
-	if id == "" {
-		return fmt.Errorf("%w: product ID is required", ErrInvalidInput)
-	}
-
-	err := s.repo.Delete(ctx, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return err
-	}
-	return nil
-}
-
-// ImportProducts parses a CSV reader and upserts products into the catalog.
-func (s *ProductService) ImportProducts(ctx context.Context, reader io.Reader) (*ImportReport, error) {
-	return ImportProductsFromCSV(reader, s.repo)
+	return s.repo.Delete(ctx, id)
 }

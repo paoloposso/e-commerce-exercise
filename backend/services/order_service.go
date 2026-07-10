@@ -16,6 +16,7 @@ const maxPurchaseRetries = 3
 var (
 	ErrPaymentDeclined     = errors.New("payment declined")
 	ErrConcurrencyConflict = errors.New("purchase failed due to concurrent stock updates — please try again")
+	ErrPriceChanged        = errors.New("price has changed since last viewed")
 )
 
 var errCASConflict = errors.New("cas conflict: product version changed during checkout")
@@ -29,7 +30,7 @@ func NewOrderService(repo OrderRepository, broker payment.Broker) *OrderService 
 	return &OrderService{repo: repo, payment: broker}
 }
 
-func (s *OrderService) PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int) (*models.Order, error) {
+func (s *OrderService) PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
 	sku = strings.TrimSpace(sku)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 
@@ -52,19 +53,23 @@ func (s *OrderService) PurchaseProduct(ctx context.Context, sku, customerID, ide
 	}
 
 	for attempt := 1; attempt <= maxPurchaseRetries; attempt++ {
-		order, err := s.tryPurchase(ctx, sku, customerID, idempotencyKey, quantity)
+		order, err := s.tryPurchase(ctx, sku, customerID, idempotencyKey, quantity, expectedPrice)
 		if err == nil {
 			return order, nil
 		}
 
-		if errors.Is(err, ErrInsufficientStock) || errors.Is(err, ErrPaymentDeclined) || errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrInsufficientStock) || errors.Is(err, ErrPaymentDeclined) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrPriceChanged) {
 			return nil, err
 		}
 
 		if errors.Is(err, errCASConflict) {
 			if attempt < maxPurchaseRetries {
-				time.Sleep(time.Duration(attempt*50) * time.Millisecond)
-				continue
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(time.Duration(attempt*50) * time.Millisecond):
+					continue
+				}
 			}
 			return nil, ErrConcurrencyConflict
 		}
@@ -75,13 +80,17 @@ func (s *OrderService) PurchaseProduct(ctx context.Context, sku, customerID, ide
 	return nil, ErrConcurrencyConflict
 }
 
-func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempotencyKey string, quantity int) (*models.Order, error) {
+func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
 	product, err := s.repo.GetBySKU(ctx, sku)
 	if err != nil {
 		return nil, err
 	}
 	if product == nil {
 		return nil, ErrNotFound
+	}
+
+	if product.Price != expectedPrice {
+		return nil, fmt.Errorf("%w: expected %.2f, got %.2f", ErrPriceChanged, expectedPrice, product.Price)
 	}
 
 	if product.Stock < quantity {
@@ -108,7 +117,10 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 	})
 
 	if err != nil || (payResult != nil && payResult.Status != "approved") {
-		_ = s.repo.RestoreStock(ctx, sku, quantity)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.repo.RestoreStock(cleanupCtx, sku, quantity)
+
 		if errors.Is(err, payment.ErrDeclined) || (payResult != nil && payResult.Status == "declined") {
 			return nil, ErrPaymentDeclined
 		}
@@ -127,10 +139,18 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 		IdempotencyKey: idempotencyKey,
 		CreatedAt:      time.Now(),
 	}
-	if err := s.repo.CreateOrder(ctx, order); err != nil {
-		_ = s.repo.RestoreStock(ctx, sku, quantity)
+
+	finalizationCtx, finalCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer finalCancel()
+
+	if err := s.repo.CreateOrder(finalizationCtx, order); err != nil {
+		_ = s.repo.RestoreStock(finalizationCtx, sku, quantity)
 		return nil, fmt.Errorf("failed to record order after payment: %w", err)
 	}
 
 	return order, nil
+}
+
+func (s *OrderService) ListOrders(ctx context.Context) ([]models.Order, error) {
+	return s.repo.ListOrders(ctx)
 }

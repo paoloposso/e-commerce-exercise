@@ -6,7 +6,7 @@ import (
 	"ntd/backend/models"
 )
 
-// OrderService defines the checkout operations consumed by the order HTTP handler.
 type OrderService interface {
-	PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int) (*models.Order, error)
+	PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error)
+	ListOrders(ctx context.Context) ([]models.Order, error)
 }

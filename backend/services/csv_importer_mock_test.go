@@ -8,7 +8,6 @@ import (
 	"ntd/backend/models"
 )
 
-// mockImporterRepository implements ProductImporterStore for service unit testing.
 type mockImporterRepository struct {
 	getBySKUFn func(ctx context.Context, sku string) (*models.Product, error)
 	createFn   func(ctx context.Context, p *models.Product) error
@@ -26,17 +25,17 @@ func (m *mockImporterRepository) Update(ctx context.Context, id string, p *model
 }
 
 func TestImportProductsFromCSV_Mocked(t *testing.T) {
-	// Tracks how many times Create and Update were triggered on the mocked repository
+
 	createdCount := 0
 	updatedCount := 0
 
 	mockRepo := &mockImporterRepository{
 		getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
 			if sku == "SKU-NEW" {
-				return nil, nil // Product does not exist
+				return nil, nil
 			}
 			if sku == "SKU-DUP" {
-				return &models.Product{ID: "existing-uuid-1", SKU: "SKU-DUP"}, nil // Product exists
+				return &models.Product{ID: "existing-uuid-1", SKU: "SKU-DUP"}, nil
 			}
 			return nil, nil
 		},
@@ -56,33 +55,29 @@ func TestImportProductsFromCSV_Mocked(t *testing.T) {
 		},
 	}
 
-	csvData := `name,sku,description,category,price,stock,weight_kg
+	csvContent := `name,sku,description,category,price,stock,weight_kg
 New Mock Product,SKU-NEW,New mock description,Mocking,19.99,50,0.5
 Duplicate Mock Product,SKU-DUP,Updated mock details,Mocking,29.99,100,1.2
 `
 
-	reader := bytes.NewBufferString(csvData)
-	report, err := ImportProductsFromCSV(reader, mockRepo)
+	buf := bytes.NewBufferString(csvContent)
+	report, err := ImportProductsFromCSV(context.Background(), buf, mockRepo)
 	if err != nil {
 		t.Fatalf("ImportProductsFromCSV failed under mock context: %v", err)
 	}
 
-	// 2 rows processed
 	if report.TotalRows != 2 {
 		t.Errorf("Expected 2 processed rows, got %d", report.TotalRows)
 	}
 
-	// 1 Create operation
 	if report.ImportedRows != 1 || createdCount != 1 {
 		t.Errorf("Expected 1 imported product, got report: %d, create calls: %d", report.ImportedRows, createdCount)
 	}
 
-	// 1 Update operation
 	if report.UpdatedRows != 1 || updatedCount != 1 {
 		t.Errorf("Expected 1 updated product, got report: %d, update calls: %d", report.UpdatedRows, updatedCount)
 	}
 
-	// 0 validation failures
 	if len(report.Errors) != 0 {
 		t.Errorf("Expected 0 errors, got %d: %+v", len(report.Errors), report.Errors)
 	}

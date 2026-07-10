@@ -8,14 +8,12 @@ import (
 	_ "github.com/glebarez/go-sqlite"
 )
 
-// ConnectDB establishes a connection to SQLite database, runs initial schema migrations, and returns the DB connection pointer.
 func ConnectDB(dbPath string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
 
-	// Verify connection
 	if err = db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping SQLite database: %w", err)
@@ -23,7 +21,6 @@ func ConnectDB(dbPath string) (*sql.DB, error) {
 
 	log.Printf("Successfully connected to SQLite database at: %s", dbPath)
 
-	// Build DB schemas
 	err = initializeSchema(db)
 	if err != nil {
 		_ = db.Close()
@@ -33,7 +30,6 @@ func ConnectDB(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-// initializeSchema sets up the products and orders tables if they do not exist.
 func initializeSchema(db *sql.DB) error {
 	productsTable := `
 	CREATE TABLE IF NOT EXISTS products (

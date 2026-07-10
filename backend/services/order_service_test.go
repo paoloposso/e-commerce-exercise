@@ -10,11 +10,12 @@ import (
 )
 
 type mockOrderRepository struct {
-	getBySKUFn                func(ctx context.Context, sku string) (*models.Product, error)
-	getOrderByIdempotencyFn   func(ctx context.Context, key string) (*models.Order, error)
-	tryDecrementStockFn       func(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error)
-	restoreStockFn            func(ctx context.Context, sku string, quantity int) error
-	createOrderFn             func(ctx context.Context, order *models.Order) error
+	getBySKUFn              func(ctx context.Context, sku string) (*models.Product, error)
+	getOrderByIdempotencyFn func(ctx context.Context, key string) (*models.Order, error)
+	tryDecrementStockFn     func(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error)
+	restoreStockFn          func(ctx context.Context, sku string, quantity int) error
+	createOrderFn           func(ctx context.Context, order *models.Order) error
+	listOrdersFn            func(ctx context.Context) ([]models.Order, error)
 }
 
 func (m *mockOrderRepository) GetBySKU(ctx context.Context, sku string) (*models.Product, error) {
@@ -43,6 +44,12 @@ func (m *mockOrderRepository) CreateOrder(ctx context.Context, order *models.Ord
 		return m.createOrderFn(ctx, order)
 	}
 	return nil
+}
+func (m *mockOrderRepository) ListOrders(ctx context.Context) ([]models.Order, error) {
+	if m.listOrdersFn != nil {
+		return m.listOrdersFn(ctx)
+	}
+	return nil, nil
 }
 
 func defaultBroker() payment.Broker {
@@ -73,7 +80,7 @@ func TestPurchaseProduct_PaymentDeclined(t *testing.T) {
 	}
 
 	service := NewOrderService(mockRepo, declinedBroker)
-	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-decline", 2)
+	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-decline", 2, 10.00)
 	if !errors.Is(err, ErrPaymentDeclined) {
 		t.Errorf("Expected ErrPaymentDeclined, got %v", err)
 	}
@@ -97,7 +104,7 @@ func TestPurchaseProduct_CASConflictExhaustRetries(t *testing.T) {
 	}
 
 	service := NewOrderService(mockRepo, defaultBroker())
-	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-cas", 2)
+	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-cas", 2, 10.00)
 	if !errors.Is(err, ErrConcurrencyConflict) {
 		t.Errorf("Expected ErrConcurrencyConflict, got %v", err)
 	}
@@ -116,9 +123,25 @@ func TestPurchaseProduct_InsufficientStock(t *testing.T) {
 	}
 
 	service := NewOrderService(mockRepo, defaultBroker())
-	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-nostock", 5)
+	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-nostock", 5, 10.00)
 	if !errors.Is(err, ErrInsufficientStock) {
 		t.Errorf("Expected ErrInsufficientStock, got %v", err)
+	}
+}
+
+func TestPurchaseProduct_PriceChanged(t *testing.T) {
+	product := &models.Product{ID: "p1", SKU: "SKU-001", Price: 15.00, Stock: 5, Version: 1}
+
+	mockRepo := &mockOrderRepository{
+		getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
+			return product, nil
+		},
+	}
+
+	service := NewOrderService(mockRepo, defaultBroker())
+	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-price", 2, 10.00)
+	if !errors.Is(err, ErrPriceChanged) {
+		t.Errorf("Expected ErrPriceChanged, got %v", err)
 	}
 }
 
@@ -135,7 +158,7 @@ func TestPurchaseProduct_IdempotencyReplay(t *testing.T) {
 	}
 
 	service := NewOrderService(mockRepo, defaultBroker())
-	order, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-replay", 2)
+	order, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-replay", 2, 10.00)
 	if err != nil {
 		t.Fatalf("Expected nil error on idempotent replay, got %v", err)
 	}

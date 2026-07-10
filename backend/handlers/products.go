@@ -11,12 +11,10 @@ import (
 	"ntd/backend/services"
 )
 
-// ProductHandler coordinates HTTP routing for the product catalog domain.
 type ProductHandler struct {
 	service ProductService
 }
 
-// NewProductHandler creates a new ProductHandler with the given ProductService.
 func NewProductHandler(service ProductService) *ProductHandler {
 	return &ProductHandler{service: service}
 }
@@ -33,7 +31,6 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// ListAndSearchProducts handles product listing and keyword/category filters.
 func (h *ProductHandler) ListAndSearchProducts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	category := r.URL.Query().Get("category")
@@ -50,94 +47,6 @@ func (h *ProductHandler) ListAndSearchProducts(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, products)
 }
 
-// CreateProduct handles inserting a new product.
-func (h *ProductHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
-	var p models.Product
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid JSON payload")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	err := h.service.CreateProduct(ctx, &p)
-	if err != nil {
-		if errors.Is(err, services.ErrInvalidInput) || errors.Is(err, services.ErrSKUDuplicate) {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSONError(w, http.StatusInternalServerError, "Failed to create product")
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, p)
-}
-
-// UpdateProduct updates product attributes for a specific ID.
-func (h *ProductHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSONError(w, http.StatusBadRequest, "Product ID is required")
-		return
-	}
-
-	var p models.Product
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid JSON payload")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	err := h.service.UpdateProduct(ctx, id, &p)
-	if err != nil {
-		if errors.Is(err, services.ErrInvalidInput) || errors.Is(err, services.ErrSKUDuplicate) {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if errors.Is(err, services.ErrNotFound) {
-			writeJSONError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeJSONError(w, http.StatusInternalServerError, "Failed to update product")
-		return
-	}
-
-	p.ID = id
-	writeJSON(w, http.StatusOK, p)
-}
-
-// DeleteProduct removes a product by ID.
-func (h *ProductHandler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSONError(w, http.StatusBadRequest, "Product ID is required")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	err := h.service.DeleteProduct(ctx, id)
-	if err != nil {
-		if errors.Is(err, services.ErrInvalidInput) {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if errors.Is(err, services.ErrNotFound) {
-			writeJSONError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeJSONError(w, http.StatusInternalServerError, "Failed to delete product")
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ImportProducts parses an uploaded CSV file and imports products into the catalog.
 func (h *ProductHandler) ImportProducts(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
@@ -162,4 +71,85 @@ func (h *ProductHandler) ImportProducts(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, report)
+}
+
+func (h *ProductHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
+	var p models.Product
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	err = h.service.CreateProduct(ctx, &p)
+	if err != nil {
+		if errors.Is(err, services.ErrSKUDuplicate) {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrInvalidInput) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "Failed to create product")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (h *ProductHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "Missing product ID")
+		return
+	}
+
+	var p models.Product
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	err = h.service.UpdateProduct(ctx, id, &p)
+	if err != nil {
+		if errors.Is(err, services.ErrSKUDuplicate) {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, services.ErrInvalidInput) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "Failed to update product")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (h *ProductHandler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "Missing product ID")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	err := h.service.DeleteProduct(ctx, id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to delete product")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

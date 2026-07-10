@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -22,7 +23,6 @@ func TestImportProductsFromCSV_Integration(t *testing.T) {
 
 	productRepo := repository.NewSQLiteProductRepository(dbHandle)
 
-	// Mock CSV contents representing various edge cases
 	csvData := `name,sku,description,category,price,stock,weight_kg
 Standard Product,SKU-001,Standard item description,Electronics,99.99,10,1.5
 Product with Symbol,SKU-002,Item priced with dollar symbol,Home,$45.50,150,0.85
@@ -34,19 +34,16 @@ Product with Empty Name,SKU-006,This product name is empty,,12.50,5,0.3
 Product with Missing SKU, ,No sku value provided,Outdoors,150.00,8,4.2
 `
 
-	reader := bytes.NewBufferString(csvData)
-	report, err := ImportProductsFromCSV(reader, productRepo)
+	buf := bytes.NewBufferString(csvData)
+	report, err := ImportProductsFromCSV(context.Background(), buf, productRepo)
 	if err != nil {
 		t.Fatalf("ImportProductsFromCSV failed: %v", err)
 	}
 
-	// 8 data rows total (excluding header)
 	if report.TotalRows != 8 {
 		t.Errorf("Expected 8 total rows, got %d", report.TotalRows)
 	}
 
-	// Valid rows: SKU-001, SKU-002, SKU-003, SKU-006 (4 rows)
-	// Invalid rows: SKU-004 (invalid price), SKU-005 (negative stock), SKU-007 (missing name completely), SKU-008 (missing SKU completely) (4 rows)
 	expectedImported := 4
 	if report.ImportedRows != expectedImported {
 		t.Errorf("Expected %d imported products, got %d", expectedImported, report.ImportedRows)
@@ -57,7 +54,6 @@ Product with Missing SKU, ,No sku value provided,Outdoors,150.00,8,4.2
 		t.Errorf("Expected %d errors, got %d", expectedErrors, len(report.Errors))
 	}
 
-	// Verify error details
 	errorChecks := map[int]string{
 		5: "Invalid price format",
 		6: "Stock quantity cannot be negative",

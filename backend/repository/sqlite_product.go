@@ -15,12 +15,10 @@ type SQLiteProductRepository struct {
 	db *sql.DB
 }
 
-// NewSQLiteProductRepository constructs a concrete SQLiteProductRepository utilizing SQLite storage.
 func NewSQLiteProductRepository(db *sql.DB) *SQLiteProductRepository {
 	return &SQLiteProductRepository{db: db}
 }
 
-// Helper to generate pseudo-UUIDv4 inside the repository layer
 func generateUUID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
@@ -131,7 +129,6 @@ func (r *SQLiteProductRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetOrderByIdempotencyKey returns an existing order for the given key, or (nil, nil) if not found.
 func (r *SQLiteProductRepository) GetOrderByIdempotencyKey(ctx context.Context, idempotencyKey string) (*models.Order, error) {
 	var o models.Order
 	err := r.db.QueryRowContext(ctx,
@@ -147,9 +144,25 @@ func (r *SQLiteProductRepository) GetOrderByIdempotencyKey(ctx context.Context, 
 	return &o, nil
 }
 
-// TryDecrementStock performs a Compare-And-Swap stock decrement.
-// It updates the row only when the current version matches expectedVersion.
-// Returns (true, nil) on success, (false, nil) on a version conflict (retry), or (false, err) on a database error.
+func (r *SQLiteProductRepository) ListOrders(ctx context.Context) ([]models.Order, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT id, customer_id, sku, quantity, total_price, idempotency_key, created_at FROM orders ORDER BY created_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []models.Order
+	for rows.Next() {
+		var o models.Order
+		err := rows.Scan(&o.ID, &o.CustomerID, &o.SKU, &o.Quantity, &o.TotalPrice, &o.IdempotencyKey, &o.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	return orders, nil
+}
+
 func (r *SQLiteProductRepository) TryDecrementStock(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error) {
 	result, err := r.db.ExecContext(ctx,
 		"UPDATE products SET stock = stock - ?, version = version + 1 WHERE sku = ? AND version = ? AND stock >= ?",
@@ -165,7 +178,6 @@ func (r *SQLiteProductRepository) TryDecrementStock(ctx context.Context, sku str
 	return rowsAffected == 1, nil
 }
 
-// RestoreStock increments stock back by quantity. Called when payment fails after a successful decrement.
 func (r *SQLiteProductRepository) RestoreStock(ctx context.Context, sku string, quantity int) error {
 	_, err := r.db.ExecContext(ctx,
 		"UPDATE products SET stock = stock + ?, version = version + 1 WHERE sku = ?",
@@ -174,7 +186,6 @@ func (r *SQLiteProductRepository) RestoreStock(ctx context.Context, sku string, 
 	return err
 }
 
-// CreateOrder inserts a completed order record into the database.
 func (r *SQLiteProductRepository) CreateOrder(ctx context.Context, order *models.Order) error {
 	if order.ID == "" {
 		order.ID = generateUUID()

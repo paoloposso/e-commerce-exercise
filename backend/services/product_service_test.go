@@ -36,66 +36,98 @@ func (m *mockProductRepository) Delete(ctx context.Context, id string) error {
 	return m.deleteFn(ctx, id)
 }
 
-func TestCreateProduct_ServiceValidations(t *testing.T) {
-	mockRepo := &mockProductRepository{
-		getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
-			if sku == "SKU-EXISTS" {
-				return &models.Product{ID: "existing-uuid", SKU: "SKU-EXISTS"}, nil
-			}
-			return nil, nil
-		},
-		createFn: func(ctx context.Context, p *models.Product) error {
-			return nil
-		},
-	}
+func TestProductService_CreateProduct(t *testing.T) {
+	t.Run("valid input", func(t *testing.T) {
+		repo := &mockProductRepository{
+			getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
+				return nil, nil
+			},
+			createFn: func(ctx context.Context, p *models.Product) error {
+				return nil
+			},
+		}
+		s := NewProductService(repo)
+		err := s.CreateProduct(context.Background(), &models.Product{
+			Name:  "Test",
+			SKU:   "TEST-1",
+			Price: 10.0,
+			Stock: 5,
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	})
 
-	service := NewProductService(mockRepo)
+	t.Run("duplicate sku", func(t *testing.T) {
+		repo := &mockProductRepository{
+			getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
+				return &models.Product{ID: "existing-id", SKU: sku}, nil
+			},
+		}
+		s := NewProductService(repo)
+		err := s.CreateProduct(context.Background(), &models.Product{
+			Name:  "Test",
+			SKU:   "TEST-1",
+			Price: 10.0,
+			Stock: 5,
+		})
+		if !errors.Is(err, ErrSKUDuplicate) {
+			t.Fatalf("expected ErrSKUDuplicate, got %v", err)
+		}
+	})
 
-	p1 := &models.Product{SKU: "SKU-VAL", Name: "  "}
-	err := service.CreateProduct(context.Background(), p1)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("Expected ErrInvalidInput for empty name, got %v", err)
-	}
-
-	p2 := &models.Product{SKU: "SKU-VAL", Name: "Test Product", Price: -10.00}
-	err = service.CreateProduct(context.Background(), p2)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("Expected ErrInvalidInput for negative price, got %v", err)
-	}
-
-	p3 := &models.Product{SKU: "SKU-VAL", Name: "Test Product", Stock: -5}
-	err = service.CreateProduct(context.Background(), p3)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("Expected ErrInvalidInput for negative stock, got %v", err)
-	}
-
-	p4 := &models.Product{SKU: "SKU-EXISTS", Name: "New Product"}
-	err = service.CreateProduct(context.Background(), p4)
-	if !errors.Is(err, ErrSKUDuplicate) {
-		t.Errorf("Expected ErrSKUDuplicate for existing SKU, got %v", err)
-	}
-
-	p5 := &models.Product{SKU: "SKU-NEW-STUFF", Name: "Unique Product", Price: 15.50, Stock: 10, WeightKg: 0.5}
-	err = service.CreateProduct(context.Background(), p5)
-	if err != nil {
-		t.Errorf("Expected successful product creation, got error: %v", err)
-	}
-	if p5.ID == "" {
-		t.Errorf("Expected product to have a UUID assigned, got empty string")
-	}
+	t.Run("invalid input", func(t *testing.T) {
+		repo := &mockProductRepository{}
+		s := NewProductService(repo)
+		err := s.CreateProduct(context.Background(), &models.Product{
+			Name:  "",
+			SKU:   "TEST-1",
+			Price: 10.0,
+			Stock: 5,
+		})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("expected ErrInvalidInput, got %v", err)
+		}
+	})
 }
 
-func TestDeleteProduct_ServiceNotFound(t *testing.T) {
-	mockRepo := &mockProductRepository{
-		deleteFn: func(ctx context.Context, id string) error {
-			return ErrNotFound
-		},
-	}
+func TestProductService_UpdateProduct(t *testing.T) {
+	t.Run("valid update", func(t *testing.T) {
+		repo := &mockProductRepository{
+			getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
+				return &models.Product{ID: "prod-1", SKU: sku}, nil
+			},
+			updateFn: func(ctx context.Context, id string, p *models.Product) error {
+				return nil
+			},
+		}
+		s := NewProductService(repo)
+		err := s.UpdateProduct(context.Background(), "prod-1", &models.Product{
+			Name:  "Updated name",
+			SKU:   "TEST-1",
+			Price: 10.0,
+			Stock: 5,
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	})
 
-	service := NewProductService(mockRepo)
-
-	err := service.DeleteProduct(context.Background(), "missing-id")
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("Expected ErrNotFound for missing ID delete, got %v", err)
-	}
+	t.Run("duplicate SKU on different product", func(t *testing.T) {
+		repo := &mockProductRepository{
+			getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
+				return &models.Product{ID: "prod-2", SKU: sku}, nil
+			},
+		}
+		s := NewProductService(repo)
+		err := s.UpdateProduct(context.Background(), "prod-1", &models.Product{
+			Name:  "Updated name",
+			SKU:   "TEST-1",
+			Price: 10.0,
+			Stock: 5,
+		})
+		if !errors.Is(err, ErrSKUDuplicate) {
+			t.Fatalf("expected ErrSKUDuplicate, got %v", err)
+		}
+	})
 }

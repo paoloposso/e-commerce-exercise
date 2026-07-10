@@ -6,7 +6,6 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"log"
 	"strconv"
@@ -16,14 +15,12 @@ import (
 	"ntd/backend/models"
 )
 
-// RowError captures validation errors for specific rows in the CSV.
 type RowError struct {
 	RowNumber int    `json:"row_number"`
 	SKU       string `json:"sku,omitempty"`
 	Error     string `json:"error"`
 }
 
-// ImportReport summarizes the results of the CSV import process.
 type ImportReport struct {
 	TotalRows    int        `json:"total_rows"`
 	ImportedRows int        `json:"imported_rows"`
@@ -31,15 +28,13 @@ type ImportReport struct {
 	Errors       []RowError `json:"errors"`
 }
 
-// GenerateUUID generates a pseudo-UUIDv4 using crypto/rand.
 func GenerateUUID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// ImportProductsFromCSV parses the CSV reader, validates row-by-row, and upserts products using the repository.
-func ImportProductsFromCSV(reader io.Reader, repo ProductImporterStore) (*ImportReport, error) {
+func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductImporterStore) (*ImportReport, error) {
 	csvReader := csv.NewReader(reader)
 	csvReader.LazyQuotes = true
 
@@ -66,6 +61,10 @@ func ImportProductsFromCSV(reader io.Reader, repo ProductImporterStore) (*Import
 
 	rowNum := 1
 	for {
+		if err := ctx.Err(); err != nil {
+			return report, fmt.Errorf("import aborted: %w", err)
+		}
+
 		record, err := csvReader.Read()
 		if err == io.EOF {
 			break
@@ -120,9 +119,6 @@ func ImportProductsFromCSV(reader io.Reader, repo ProductImporterStore) (*Import
 			})
 			continue
 		}
-		nameVal = html.EscapeString(nameVal)
-
-		descVal = html.EscapeString(descVal)
 
 		cleanPriceVal := strings.ReplaceAll(priceVal, "$", "")
 		cleanPriceVal = strings.TrimSpace(cleanPriceVal)
@@ -205,42 +201,45 @@ func ImportProductsFromCSV(reader io.Reader, repo ProductImporterStore) (*Import
 			WeightKg:    weight,
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+		rowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 
-		existingProduct, err := repo.GetBySKU(ctx, product.SKU)
+		existingProduct, err := repo.GetBySKU(rowCtx, product.SKU)
 		if err != nil {
 			report.Errors = append(report.Errors, RowError{
 				RowNumber: rowNum,
 				SKU:       skuVal,
 				Error:     fmt.Sprintf("Database query failed: %v", err),
 			})
+			cancel()
 			continue
 		}
 
 		if existingProduct == nil {
-			err = repo.Create(ctx, &product)
+			err = repo.Create(rowCtx, &product)
 			if err != nil {
 				report.Errors = append(report.Errors, RowError{
 					RowNumber: rowNum,
 					SKU:       skuVal,
 					Error:     fmt.Sprintf("Database insert failed: %v", err),
 				})
+				cancel()
 				continue
 			}
 			report.ImportedRows++
 		} else {
-			err = repo.Update(ctx, existingProduct.ID, &product)
+			err = repo.Update(rowCtx, existingProduct.ID, &product)
 			if err != nil {
 				report.Errors = append(report.Errors, RowError{
 					RowNumber: rowNum,
 					SKU:       skuVal,
 					Error:     fmt.Sprintf("Database update failed: %v", err),
 				})
+				cancel()
 				continue
 			}
 			report.UpdatedRows++
 		}
+		cancel()
 	}
 
 	log.Printf("CSV Import completed. Total rows: %d, Imported: %d, Updated: %d, Errors: %d",

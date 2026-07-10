@@ -1,102 +1,98 @@
-# Enterprise-Grade E-Commerce Application
+# NTD E-Commerce Application
 
-A decoupled, high-performance e-commerce catalog and purchase simulation built with **Go** (backend) and **React** (frontend), powered by **SQLite** (persistent embedded database) and packaged as a single-container **Docker** deployment.
+A fully decoupled, hyper-optimized E-Commerce platform built with **Go** and **React (Vite)**. It uses a **Single-Binary Deployment** model, meaning the frontend UI is baked directly into the backend server for a frictionless single-container deployment!
 
-## Challenge Verification Details
-*   **Example CSV Download Date:** 2026-07-09
-
----
-
-## Architectural & Design Decisions
-
-### 1. Persistent, Serverless SQL Backend (SQLite)
-*   **Decision:** Replaced MongoDB with **SQLite** using the pure-Go driver (`github.com/glebarez/go-sqlite`).
-*   **Rationale:** SQLite is serverless and database-file-based. It eliminates the operational overhead of running a separate database container during local development. By utilizing the pure-Go driver, we bypass any CGO compiler compiler constraints, allowing simple, robust multi-stage Docker builds.
-*   **Data Integrity:** SQL transactions are utilized for checkout processes, guaranteeing ACID consistency. Product `sku` indexes are enforced at the database schema level.
-
-### 2. Standalone Commands Layout (`cmd/`)
-*   **Decision:** Decoupled administrative tasks (database seeding) from the web server runtime by structuring execution commands under a `cmd/` directory.
-*   *   `backend/cmd/api/main.go` - The production web API server, completely independent of local disk files.
-    *   `backend/cmd/seeder/main.go` - A robust, on-demand command-line seeder utility.
-*   **Rationale:** Running data-loading migrations during server boot in distributed environments is dangerous (due to double-runs, locks, and start delays). Decoupling it into a CLI command gives developers and operators full control over when data is initialized or updated.
-
-### 3. CSV Sanitization & Error Reporting
-*   **Decision:** Implemented a **"Validate, Sanitize, and Report"** engine instead of a simple bulk insert.
-*   **Rationale:** The challenge sample CSV contains multiple security vectors (SQL injections, XSS payloads) and malformed data (negative stock, non-numeric values, duplicates).
-    *   **SQL Injection Prevention:** Parametrization using standard SQL place-markers (`?`) blocks SQL injections.
-    *   **XSS Mitigation:** HTML escaping (`html.EscapeString`) handles dangerous content (e.g. `<script>` tags) safely before indexing.
-    *   **Graceful Reports:** Rather than throwing general exceptions and crashing, the service imports all valid rows and returns a JSON/CLI summary of failed row numbers and their exact validation errors.
-
-### 4. Atomic Inventory Deductions
-*   **Decision:** Structured checkout purchases around explicit database transactions (`db.BeginTx`).
-*   **Rationale:** To prevent double-spending or race condition stock allocations (e.g. two users buying the last item at the exact same millisecond), the stock quantity is fetched and decremented inside an isolated transaction. If database operations fail or stock falls short, changes are rolled back automatically.
-
-### 5. Repository Pattern & Dependency Injection (Consumer-Defined Interfaces)
-*   **Decision:** Replaced the global database client with a decoupled repository architecture where database interfaces are defined by the consumer packages rather than the database implementation package itself.
-    *   `handlers.ProductStore` specifies the CRUD and checkout methods the HTTP handlers need.
-    *   `services.ProductImporterStore` specifies the smaller subset of write/query methods the CSV importer service requires.
-    *   `repository.SQLiteProductRepository` implements these queries concretely and returns a concrete pointer type (`*SQLiteProductRepository`) which implicitly satisfies both consumers.
-*   **Rationale:** In Go, interfaces are satisfied implicitly (without an explicit `implements` keyword). Defining interfaces directly in the consuming packages keeps packages fully decoupled, prevents circular imports, and respects the Go proverb: *"The bigger the interface, the weaker the abstraction."* This also simplifies testing by allowing us to design minimal mock structs tailored to specific test scopes.
+> The example CSV file was downloaded on **2026-07-09**.
 
 ---
 
-## Project Structure
+## 🚀 How to Execute (Start to End)
 
-```
-.
-├── backend/
-│   ├── cmd/
-│   │   ├── api/          # Production HTTP server entrypoint
-│   │   └── seeder/       # Standalone CLI seeder command line tool
-│   ├── data/             # Raw seeding resources (products_example.csv)
-│   ├── handlers/         # Products REST endpoints & purchase handlers
-│   ├── models/           # Go struct representations for database rows
-│   ├── repository/       # SQLite database connection setup and query implementations
-│   └── services/         # CSV parser, validation logic & report engine
-├── frontend/             # React SPA (Vite + TypeScript) [Upcoming]
-├── docker-compose.yml    # Single-command orchestration
-└── README.md             # Project documentation (this file)
-```
+The easiest way to run the entire application (Database, API, and Frontend UI) is using Docker.
 
----
-
-## Local Setup & Execution (Backend)
-
-Ensure you have [Go 1.22+](https://go.dev/dl/) installed.
-
-### 1. Install Dependencies
-Navigate to the backend directory and download dependencies:
-```bash
-cd backend
-go mod tidy
-```
-
-### 2. Seed the Database
-Seed the SQLite database (`ecommerce.db`) using the CSV CLI tool (no parameters needed for default run):
-```bash
-go run cmd/seeder/main.go
-```
-
-### 3. Start the Web Server
-Launch the HTTP API server:
-```bash
-go run cmd/api/main.go
-```
-The server will run on `http://localhost:8080`.
-*   Verify server health: `curl http://localhost:8080/health`
-
-### 4. Running Automated Tests
-Run handler integration tests and parser verification test suites:
-```bash
-go test ./... -v
-```
-
----
-
-## Running with Docker
-
-Start the application inside containers:
+### 1. Start the System
+Ensure you have Docker installed, then run:
 ```bash
 docker compose up --build
 ```
-This builds the multi-stage backend, starts the service, and mounts a persistent volume to preserve the database file across restarts.
+This single command will:
+1. Build the React frontend.
+2. Compile the Go backend (embedding the React UI inside it).
+3. Start the server at `http://localhost:8080/`.
+
+### 2. Seed the Database
+We deleted the redundant Command-Line seeder because the React UI handles this natively!
+
+To seed the database:
+1. Go to **http://localhost:8080/** in your browser.
+2. Click **"Upload CSV"** in the top right corner.
+3. Select the `backend/data/products_example.csv` file from this repository.
+4. Watch the products instantly populate the screen!
+
+### 3. Open the App
+You can now browse the catalog and click **Buy Now** to simulate checkouts!
+
+---
+
+## 🏛️ Architectural Decisions
+
+### 1. HTTP Router: Standard Library `ServeMux` (Go 1.22+)
+**Why Mux?**
+We rely entirely on Go's built-in `http.ServeMux` rather than third-party frameworks like Gin or Fiber.
+*   **Reason:** Go 1.22 introduced native path parameter routing (e.g., `PUT /api/products/{id}`). This eliminated the need for bloated external libraries, resulting in faster compilation, zero router dependencies, and highly idiomatic code.
+
+### 2. Safe Checkouts: Optimistic Locking & Retries
+**Why Retries?**
+When multiple users try to buy the exact same product at the exact same millisecond, race conditions can occur (double-spending stock). 
+*   **Reason:** We implemented **Optimistic Locking** using a `version` column in SQLite. During checkout, if a version conflict is detected (meaning someone else just bought it), the `OrderService` automatically catches the error, waits 50 milliseconds, and **Retries** the transaction. This guarantees 100% stock accuracy without heavy table locks.
+
+### 3. Idempotency Keys
+**Why Idempotency?**
+If a user clicks "Buy Now" and their WiFi drops before they get the success message, they might click it again and get charged twice.
+*   **Reason:** The frontend generates a unique `idempotency_key` (UUID) for every purchase attempt. The backend checks this key; if it has seen it before, it safely returns the exact same successful order response without charging the card again or deducting stock.
+
+### 4. Single-Binary Embedded React
+**Why Embed?**
+*   **Reason:** We utilize Go's `//go:embed` directive. The Dockerfile builds the React frontend and deposits it into the Go source tree. The Go compiler then bakes the HTML/CSS/JS directly into the binary. This eliminates the need for an Nginx proxy or a complex two-container Docker setup.
+
+---
+
+## 🔌 API Endpoints
+
+The backend exposes a highly specialized, minimalist JSON API:
+
+| Method | Endpoint | Description |
+| **GET** | `/api/products` | Lists the catalog. Supports `?q=` (search) and `?category=` filters. |
+| **POST** | `/api/products/import` | Accepts a Multipart Form (CSV file) to bulk upsert products. |
+| **POST** | `/api/products` | Creates a single product manually. |
+| **PUT** | `/api/products/{id}` | Updates an existing product. |
+| **DELETE** | `/api/products/{id}` | Deletes a product from the catalog. |
+| **POST** | `/api/purchase` | Simulates a checkout. Requires `sku`, `quantity`, `expected_price`, `customer_id`, and `idempotency_key`. |
+| **GET** | `/api/orders` | Retrieves the global order history. |
+
+---
+
+## 🛡️ Security Decisions
+
+### 1. Cross-Site Scripting (XSS) Prevention
+If a user imports a CSV or uses the API to upload a product named `<script>alert('xss')</script>`, how is it handled?
+*   **Reasoning:** The Go backend accepts and stores the raw, unescaped string directly in the database. We explicitly **avoid** running `html.EscapeString` on the backend to prevent "double escaping" bugs. Instead, we rely entirely on **React's native JSX sanitization**. Whenever React binds dynamic data (e.g., `<p>{product.name}</p>`), it safely encodes HTML entities on the fly, rendering the exact text safely without executing malicious scripts.
+
+### 2. SQL Injection Prevention
+*   **Reasoning:** The application interacts with SQLite exclusively through the `database/sql` standard library using strict **Parameterized Queries**. By passing values as independent arguments to placeholders (`?`), the database driver guarantees that user input is treated as literal data, making SQL injection mathematically impossible.
+
+---
+
+## 🖥️ Frontend Modules (React)
+
+The frontend is a lightweight Single Page Application (SPA) utilizing Pure Vanilla CSS for premium styling. It is deeply segregated into reusable components:
+
+1. **State Management (`hooks/useAppStore.ts`)**
+   - A centralized custom hook that handles API interactions, state tracking, debounce-searching, and background background loading (to prevent UI blinking).
+2. **API Integration Layer (`services/api.ts`)**
+   - A minimalist, zero-dependency `fetch` wrapper strictly typed to match the backend JSON schemas.
+3. **Component Architecture (`components/`)**
+   - `Header.tsx`: Contains the navigation tabs, robust search bar, and CSV bulk importer.
+   - `Catalog.tsx` & `ProductCard.tsx`: Renders the grid of products with quantity steppers and purchase buttons.
+   - `OrdersTable.tsx`: Displays the transaction ledger.
+   - `ProductModal.tsx`: The overlay form for manual CRUD operations.

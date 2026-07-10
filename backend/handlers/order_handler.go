@@ -5,30 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"ntd/backend/services"
 )
 
-// PurchaseRequest represents a checkout request body sent by the client.
 type PurchaseRequest struct {
-	SKU            string `json:"sku"`
-	CustomerID     string `json:"customer_id"`
-	Quantity       int    `json:"quantity"`
-	IdempotencyKey string `json:"idempotency_key"`
+	SKU            string  `json:"sku"`
+	CustomerID     string  `json:"customer_id"`
+	Quantity       int     `json:"quantity"`
+	ExpectedPrice  float64 `json:"expected_price"`
+	IdempotencyKey string  `json:"idempotency_key"`
 }
 
-// OrderHandler coordinates HTTP routing for the checkout domain.
 type OrderHandler struct {
 	service OrderService
 }
 
-// NewOrderHandler creates a new OrderHandler with the given OrderService.
 func NewOrderHandler(service OrderService) *OrderHandler {
 	return &OrderHandler{service: service}
 }
 
-// PurchaseProduct handles product checkout requests.
 func (h *OrderHandler) PurchaseProduct(w http.ResponseWriter, r *http.Request) {
 	var req PurchaseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -39,7 +37,7 @@ func (h *OrderHandler) PurchaseProduct(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	order, err := h.service.PurchaseProduct(ctx, req.SKU, req.CustomerID, req.IdempotencyKey, req.Quantity)
+	order, err := h.service.PurchaseProduct(ctx, req.SKU, req.CustomerID, req.IdempotencyKey, req.Quantity, req.ExpectedPrice)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidInput) || errors.Is(err, services.ErrInsufficientStock) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -53,7 +51,7 @@ func (h *OrderHandler) PurchaseProduct(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusPaymentRequired, err.Error())
 			return
 		}
-		if errors.Is(err, services.ErrConcurrencyConflict) {
+		if errors.Is(err, services.ErrConcurrencyConflict) || strings.Contains(err.Error(), "price has changed") {
 			writeJSONError(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -62,4 +60,17 @@ func (h *OrderHandler) PurchaseProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, order)
+}
+
+func (h *OrderHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	orders, err := h.service.ListOrders(ctx)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to query orders")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, orders)
 }
