@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"io/fs"
 	"log"
@@ -16,6 +17,9 @@ import (
 
 //go:embed all:dist
 var frontendAssets embed.FS
+
+//go:embed data/products_example.csv
+var defaultProductsCSV string
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +58,26 @@ func main() {
 
 	orderService := services.NewOrderService(productRepo, &payment.MockBroker{})
 	orderHandler := handlers.NewOrderHandler(orderService)
+
+	autoSeed := os.Getenv("AUTO_SEED")
+	if autoSeed == "" {
+		autoSeed = "true"
+	}
+
+	if autoSeed == "true" {
+		ctx := context.Background()
+		existingProducts, err := productService.ListProducts(ctx, "", "")
+		if err == nil && len(existingProducts) == 0 {
+			log.Println("Seeding database with embedded products...")
+			reader := strings.NewReader(defaultProductsCSV)
+			report, err := productService.ImportProducts(ctx, reader)
+			if err != nil {
+				log.Printf("Warning: Failed to seed database: %v", err)
+			} else {
+				log.Printf("Database seeded successfully with %d products.", report.ImportedRows)
+			}
+		}
+	}
 
 	mux := http.NewServeMux()
 

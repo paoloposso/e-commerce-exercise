@@ -29,7 +29,8 @@ Open your browser and navigate to **http://localhost:8080/**. The frontend emula
 - **Purchase Products:** Use the quantity steppers (`+` / `-`) on any card and click **Buy Now** to trigger checkout (processed instantly via a mock billing broker using concurrency-safe optimistic locking).
 
 #### 🗂️ Inventory View (Administrator)
-- **Bulk CSV Import:** Click **Upload CSV** in the header and select `backend/data/products_example.csv` to populate the database.
+- **Embedded Database Seeding:** The database is automatically seeded using the example CSV file embedded directly inside the Go binary on its first run, so you will see catalog data immediately upon starting the application! This behavior is configurable and can be disabled by setting the environment variable `AUTO_SEED=false`.
+- **Bulk CSV Import:** You can *also* manually upload a CSV file at any time by clicking **Upload CSV** in the header and selecting your CSV file.
 - **Manual Product CRUD:**
   - Click **+ Add Product** to create a product. The price field uses a **currency mask** (typing digits automatically formats cents, e.g. `4599` displays as `45.99`, so you don't need to type `.`).
   - Validation errors (e.g. negative price, invalid SKU characters, blank name) display directly as **inline custom warnings** below each input.

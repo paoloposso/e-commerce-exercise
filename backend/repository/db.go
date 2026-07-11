@@ -65,6 +65,6 @@ func initializeSchema(db *sql.DB) error {
 		return fmt.Errorf("error creating orders table: %w", err)
 	}
 
-	log.Println("Database schemas initialized successfully (products & orders tables created)")
+	log.Println("Database schemas initialized successfully")
 	return nil
 }

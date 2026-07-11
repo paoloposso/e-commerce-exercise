@@ -9,6 +9,7 @@ services:
     environment:
       - DB_PATH=/app/data/ecommerce.db
       - PORT=8080
+      - AUTO_SEED=true
     volumes:
       - sqlite-data:/app/data
 
