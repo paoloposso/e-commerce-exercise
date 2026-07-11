@@ -1,6 +1,7 @@
 # E-Commerce Application
 
-A fully decoupled, hyper-optimized E-Commerce platform built with **Go** and **React (Vite)**. It uses a **Single-Binary Deployment** model, meaning the frontend UI is baked directly into the backend server for a frictionless single-container deployment!
+E-Commerce platform built with **Go** and **React (Vite)**. 
+It uses a **Single-Binary Deployment** model, meaning the frontend UI is baked directly into the backend server for a frictionless single-container deployment!
 
 > The example CSV file was downloaded on **2026-07-09**.
 
@@ -36,6 +37,32 @@ Open your browser and navigate to **http://localhost:8080/**. The frontend emula
 
 #### 📜 Order History View (Ledger/Audit)
 - Inspect all simulated transaction records (date, order UUID, customer token, SKU, quantity, and total price).
+
+---
+
+## 🧪 Running Tests
+
+The application has unit and integration test suites for both the backend (Go) and the frontend (React).
+
+### Backend Tests (Go)
+To run the Go tests, navigate to the `backend` folder and run the standard Go test command:
+```bash
+cd backend
+go test ./...
+```
+
+### Frontend Tests (Vitest & React Testing Library)
+To run the frontend tests, navigate to the `frontend` folder. You can run them once or in watch mode:
+*   **Run once:**
+    ```bash
+    cd frontend
+    npm run test:run
+    ```
+*   **Watch mode (interactive):**
+    ```bash
+    cd frontend
+    npm run test
+    ```
 
 ---
 
