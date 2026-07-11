@@ -56,6 +56,10 @@ func (r *SQLiteProductRepository) List(ctx context.Context, query, category stri
 		products = append(products, p)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return products, nil
 }
 
@@ -160,6 +164,11 @@ func (r *SQLiteProductRepository) ListOrders(ctx context.Context) ([]models.Orde
 		}
 		orders = append(orders, o)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return orders, nil
 }
 
