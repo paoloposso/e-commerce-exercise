@@ -9,20 +9,12 @@ import (
 )
 
 type mockProductRepository struct {
-	listFn     func(ctx context.Context, query, category string) ([]models.Product, error)
-	getByIDFn  func(ctx context.Context, id string) (*models.Product, error)
+	ProductRepository
 	getBySKUFn func(ctx context.Context, sku string) (*models.Product, error)
 	createFn   func(ctx context.Context, p *models.Product) error
 	updateFn   func(ctx context.Context, id string, p *models.Product) error
-	deleteFn   func(ctx context.Context, id string) error
 }
 
-func (m *mockProductRepository) List(ctx context.Context, query, category string) ([]models.Product, error) {
-	return m.listFn(ctx, query, category)
-}
-func (m *mockProductRepository) GetByID(ctx context.Context, id string) (*models.Product, error) {
-	return m.getByIDFn(ctx, id)
-}
 func (m *mockProductRepository) GetBySKU(ctx context.Context, sku string) (*models.Product, error) {
 	return m.getBySKUFn(ctx, sku)
 }
@@ -31,9 +23,6 @@ func (m *mockProductRepository) Create(ctx context.Context, p *models.Product) e
 }
 func (m *mockProductRepository) Update(ctx context.Context, id string, p *models.Product) error {
 	return m.updateFn(ctx, id, p)
-}
-func (m *mockProductRepository) Delete(ctx context.Context, id string) error {
-	return m.deleteFn(ctx, id)
 }
 
 func TestProductService_CreateProduct(t *testing.T) {

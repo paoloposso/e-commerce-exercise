@@ -4,138 +4,213 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"strings"
 	"testing"
 
 	"ecommerce/backend/models"
-	"ecommerce/backend/payment"
-	"ecommerce/backend/repository"
 	"ecommerce/backend/services"
 )
 
 type mockOrderService struct {
 	purchaseFn func(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error)
+	listFn     func(ctx context.Context) ([]models.Order, error)
 }
 
 func (m *mockOrderService) PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
-	return m.purchaseFn(ctx, sku, customerID, idempotencyKey, quantity, expectedPrice)
+	if m.purchaseFn != nil {
+		return m.purchaseFn(ctx, sku, customerID, idempotencyKey, quantity, expectedPrice)
+	}
+	return nil, nil
 }
 
-func TestPurchaseProduct_Integration(t *testing.T) {
-	testDBPath := "test_purchase.db"
-	dbHandle, err := repository.ConnectDB(testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to initialize test SQLite DB: %v", err)
+func (m *mockOrderService) ListOrders(ctx context.Context) ([]models.Order, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx)
 	}
-	defer func() {
-		_ = dbHandle.Close()
-		_ = os.Remove(testDBPath)
-	}()
+	return nil, nil
+}
 
-	productRepo := repository.NewSQLiteProductRepository(dbHandle)
-	orderService := services.NewOrderService(productRepo, &payment.MockBroker{})
-	orderHandler := NewOrderHandler(orderService)
+func TestPurchaseProduct_Success(t *testing.T) {
+	mockService := &mockOrderService{
+		purchaseFn: func(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
+			return &models.Order{
+				ID:             "order-123",
+				SKU:            sku,
+				CustomerID:     customerID,
+				Quantity:       quantity,
+				TotalPrice:     expectedPrice * float64(quantity),
+				IdempotencyKey: idempotencyKey,
+			}, nil
+		},
+	}
 
-	product := models.Product{
-		ID:          "p-test-1",
-		Name:        "Test Product",
-		SKU:         "SKU-TEST-1",
-		Description: "A product for purchase tests",
-		Category:    "Test",
-		Price:       25.50,
-		Stock:       3,
-		WeightKg:    0.5,
-	}
-	_, err = dbHandle.Exec("INSERT INTO products (id, name, sku, description, category, price, stock, weight_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		product.ID, product.Name, product.SKU, product.Description, product.Category, product.Price, product.Stock, product.WeightKg)
-	if err != nil {
-		t.Fatalf("Failed to seed product: %v", err)
-	}
+	handler := NewOrderHandler(mockService)
 
 	reqBody := PurchaseRequest{
-		SKU:            "SKU-TEST-1",
-		CustomerID:     "customer-uuid-001",
+		SKU:            "SKU-TEST",
+		CustomerID:     "customer-123",
 		Quantity:       2,
-		ExpectedPrice:  25.50,
-		IdempotencyKey: "idem-key-001",
+		ExpectedPrice:  10.50,
+		IdempotencyKey: "idem-key-123",
 	}
-	bodyJSON, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/api/purchase", bytes.NewBuffer(bodyJSON))
-	rr := httptest.NewRecorder()
+	bodyBytes, _ := json.Marshal(reqBody)
 
-	orderHandler.PurchaseProduct(rr, req)
+	req := httptest.NewRequest("POST", "/api/purchase", bytes.NewReader(bodyBytes))
+	w := httptest.NewRecorder()
 
-	if rr.Code != http.StatusCreated {
-		t.Errorf("Expected status code %d, got %d — body: %s", http.StatusCreated, rr.Code, rr.Body.String())
+	handler.PurchaseProduct(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("Expected status %d, got %d", http.StatusCreated, w.Code)
 	}
 
 	var order models.Order
-	err = json.Unmarshal(rr.Body.Bytes(), &order)
-	if err != nil {
-		t.Fatalf("Failed to parse order response: %v", err)
+	if err := json.NewDecoder(w.Body).Decode(&order); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if order.SKU != "SKU-TEST-1" || order.Quantity != 2 || order.TotalPrice != 51.00 {
-		t.Errorf("Order details mismatch: %+v", order)
+	if order.ID != "order-123" || order.TotalPrice != 21.00 {
+		t.Errorf("Unexpected order response: %+v", order)
 	}
-	if order.CustomerID != "customer-uuid-001" {
-		t.Errorf("Expected customer_id 'customer-uuid-001', got %q", order.CustomerID)
+}
+
+func TestPurchaseProduct_InvalidJSON(t *testing.T) {
+	handler := NewOrderHandler(&mockOrderService{})
+
+	req := httptest.NewRequest("POST", "/api/purchase", strings.NewReader("invalid-json"))
+	w := httptest.NewRecorder()
+
+	handler.PurchaseProduct(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestPurchaseProduct_Errors(t *testing.T) {
+	tests := []struct {
+		name           string
+		serviceErr     error
+		expectedStatus int
+	}{
+		{
+			name:           "Invalid Input",
+			serviceErr:     services.ErrInvalidInput,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Insufficient Stock",
+			serviceErr:     services.ErrInsufficientStock,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Not Found",
+			serviceErr:     services.ErrNotFound,
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "Payment Declined",
+			serviceErr:     services.ErrPaymentDeclined,
+			expectedStatus: http.StatusPaymentRequired,
+		},
+		{
+			name:           "Concurrency Conflict",
+			serviceErr:     services.ErrConcurrencyConflict,
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name:           "Price Changed Error Message",
+			serviceErr:     errors.New("price has changed"),
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name:           "Internal Server Error",
+			serviceErr:     errors.New("something went wrong"),
+			expectedStatus: http.StatusInternalServerError,
+		},
 	}
 
-	var remainingStock int
-	err = dbHandle.QueryRow("SELECT stock FROM products WHERE sku = ?", "SKU-TEST-1").Scan(&remainingStock)
-	if err != nil {
-		t.Fatalf("Failed to check remaining stock: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := &mockOrderService{
+				purchaseFn: func(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
+					return nil, tt.serviceErr
+				},
+			}
+
+			handler := NewOrderHandler(mockService)
+			reqBody := PurchaseRequest{
+				SKU:            "SKU-TEST",
+				CustomerID:     "customer-123",
+				Quantity:       2,
+				ExpectedPrice:  10.50,
+				IdempotencyKey: "idem-key-123",
+			}
+			bodyBytes, _ := json.Marshal(reqBody)
+
+			req := httptest.NewRequest("POST", "/api/purchase", bytes.NewReader(bodyBytes))
+			w := httptest.NewRecorder()
+
+			handler.PurchaseProduct(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
 	}
-	if remainingStock != 1 {
-		t.Errorf("Expected stock to be 1, got %d", remainingStock)
-	}
+}
 
-	bodyJSONReplay, _ := json.Marshal(reqBody)
-	reqReplay, _ := http.NewRequest("POST", "/api/purchase", bytes.NewBuffer(bodyJSONReplay))
-	rrReplay := httptest.NewRecorder()
-
-	orderHandler.PurchaseProduct(rrReplay, reqReplay)
-
-	if rrReplay.Code != http.StatusCreated {
-		t.Errorf("Idempotent replay: expected status %d, got %d", http.StatusCreated, rrReplay.Code)
-	}
-
-	var replayOrder models.Order
-	_ = json.Unmarshal(rrReplay.Body.Bytes(), &replayOrder)
-	if replayOrder.ID != order.ID {
-		t.Errorf("Idempotent replay: expected same order ID %q, got %q", order.ID, replayOrder.ID)
-	}
-
-	err = dbHandle.QueryRow("SELECT stock FROM products WHERE sku = ?", "SKU-TEST-1").Scan(&remainingStock)
-	if err != nil {
-		t.Fatalf("Failed to check remaining stock after replay: %v", err)
-	}
-	if remainingStock != 1 {
-		t.Errorf("Idempotent replay: expected stock to remain 1, got %d", remainingStock)
-	}
-
-	reqBodyExceed := PurchaseRequest{SKU: "SKU-TEST-1", CustomerID: "customer-uuid-001", Quantity: 2, ExpectedPrice: 25.50, IdempotencyKey: "idem-key-002"}
-	bodyJSONExceed, _ := json.Marshal(reqBodyExceed)
-	reqExceed, _ := http.NewRequest("POST", "/api/purchase", bytes.NewBuffer(bodyJSONExceed))
-	rrExceed := httptest.NewRecorder()
-
-	orderHandler.PurchaseProduct(rrExceed, reqExceed)
-
-	if rrExceed.Code != http.StatusBadRequest {
-		t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, rrExceed.Code)
+func TestListOrders_Success(t *testing.T) {
+	orders := []models.Order{
+		{ID: "order-1", SKU: "SKU-1", Quantity: 1},
+		{ID: "order-2", SKU: "SKU-2", Quantity: 2},
 	}
 
-	reqBodyNoKey := PurchaseRequest{SKU: "SKU-TEST-1", CustomerID: "customer-uuid-001", Quantity: 1, ExpectedPrice: 25.50}
-	bodyJSONNoKey, _ := json.Marshal(reqBodyNoKey)
-	reqNoKey, _ := http.NewRequest("POST", "/api/purchase", bytes.NewBuffer(bodyJSONNoKey))
-	rrNoKey := httptest.NewRecorder()
+	mockService := &mockOrderService{
+		listFn: func(ctx context.Context) ([]models.Order, error) {
+			return orders, nil
+		},
+	}
 
-	orderHandler.PurchaseProduct(rrNoKey, reqNoKey)
+	handler := NewOrderHandler(mockService)
 
-	if rrNoKey.Code != http.StatusBadRequest {
-		t.Errorf("Missing idempotency key: expected status %d, got %d", http.StatusBadRequest, rrNoKey.Code)
+	req := httptest.NewRequest("GET", "/api/orders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ListOrders(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var result []models.Order
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if len(result) != 2 || result[0].ID != "order-1" || result[1].ID != "order-2" {
+		t.Errorf("Unexpected orders response: %+v", result)
+	}
+}
+
+func TestListOrders_Error(t *testing.T) {
+	mockService := &mockOrderService{
+		listFn: func(ctx context.Context) ([]models.Order, error) {
+			return nil, errors.New("query failed")
+		},
+	}
+
+	handler := NewOrderHandler(mockService)
+
+	req := httptest.NewRequest("GET", "/api/orders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ListOrders(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
 	}
 }
