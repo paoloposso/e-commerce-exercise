@@ -7,6 +7,7 @@ import (
 
 type MockBroker struct {
 	ChargeFunc func(ctx context.Context, req Request) (*Result, error)
+	RefundFunc func(ctx context.Context, transactionID string) error
 }
 
 func (m *MockBroker) Charge(ctx context.Context, req Request) (*Result, error) {
@@ -21,4 +22,13 @@ func (m *MockBroker) Charge(ctx context.Context, req Request) (*Result, error) {
 		TransactionID: "mock-txn-" + req.OrderID,
 		Status:        "approved",
 	}, nil
+}
+
+func (m *MockBroker) Refund(ctx context.Context, transactionID string) error {
+	if m.RefundFunc != nil {
+		return m.RefundFunc(ctx, transactionID)
+	}
+
+	log.Printf("[MockPaymentBroker] Refunded transaction: %s", transactionID)
+	return nil
 }

@@ -14,9 +14,10 @@ import (
 const maxPurchaseRetries = 3
 
 var (
-	ErrPaymentDeclined     = errors.New("payment declined")
-	ErrConcurrencyConflict = errors.New("purchase failed due to concurrent stock updates — please try again")
-	ErrPriceChanged        = errors.New("price has changed since last viewed")
+	ErrPaymentDeclined           = errors.New("payment declined")
+	ErrConcurrencyConflict       = errors.New("purchase failed due to concurrent stock updates — please try again")
+	ErrPriceChanged              = errors.New("price has changed since last viewed")
+	ErrRefundedOrderRecordFailed = errors.New("failed to record order after payment (refunded successfully)")
 )
 
 var errCASConflict = errors.New("cas conflict: product version changed during checkout")
@@ -143,9 +144,38 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 	finalizationCtx, finalCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer finalCancel()
 
-	if err := s.repo.CreateOrder(finalizationCtx, order); err != nil {
+	var createOrderErr error
+	for rAttempt := 1; rAttempt <= 3; rAttempt++ {
+		createOrderErr = s.repo.CreateOrder(finalizationCtx, order)
+		if createOrderErr == nil {
+			break
+		}
+
+		if rAttempt < 3 {
+			select {
+			case <-ctx.Done():
+				createOrderErr = ctx.Err()
+				rAttempt = 3
+			case <-time.After(time.Duration(rAttempt*100) * time.Millisecond):
+				// continue to next retry
+			}
+		}
+	}
+
+	if createOrderErr != nil {
 		_ = s.repo.RestoreStock(finalizationCtx, sku, quantity)
-		return nil, fmt.Errorf("failed to record order after payment: %w", err)
+		
+		txnID := orderID
+		if payResult != nil && payResult.TransactionID != "" {
+			txnID = payResult.TransactionID
+		}
+		
+		refundErr := s.payment.Refund(finalizationCtx, txnID)
+		if refundErr != nil {
+			return nil, fmt.Errorf("CRITICAL: payment charged but failed to record order (%v) and refund failed (%v)", createOrderErr, refundErr)
+		}
+		
+		return nil, fmt.Errorf("%w: %w", ErrRefundedOrderRecordFailed, createOrderErr)
 	}
 
 	return order, nil

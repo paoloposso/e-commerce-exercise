@@ -23,4 +23,5 @@ type Result struct {
 
 type Broker interface {
 	Charge(ctx context.Context, req Request) (*Result, error)
+	Refund(ctx context.Context, transactionID string) error
 }

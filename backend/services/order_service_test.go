@@ -166,3 +166,58 @@ func TestPurchaseProduct_IdempotencyReplay(t *testing.T) {
 		t.Errorf("Expected same order ID %q, got %q", existingOrder.ID, order.ID)
 	}
 }
+
+func TestPurchaseProduct_CreateOrderFailRefundSuccess(t *testing.T) {
+	product := &models.Product{ID: "p1", SKU: "SKU-001", Price: 10.00, Stock: 5, Version: 1}
+	dbErr := errors.New("database disk full")
+
+	restoreCalled := false
+	mockRepo := &mockOrderRepository{
+		getBySKUFn: func(ctx context.Context, sku string) (*models.Product, error) {
+			return product, nil
+		},
+		tryDecrementStockFn: func(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error) {
+			return true, nil
+		},
+		createOrderFn: func(ctx context.Context, order *models.Order) error {
+			return dbErr
+		},
+		restoreStockFn: func(ctx context.Context, sku string, quantity int) error {
+			restoreCalled = true
+			return nil
+		},
+	}
+
+	refundCalled := false
+	mockBroker := &payment.MockBroker{
+		RefundFunc: func(ctx context.Context, transactionID string) error {
+			refundCalled = true
+			if transactionID == "" {
+				t.Error("Expected non-empty transaction ID for refund")
+			}
+			return nil
+		},
+	}
+
+	service := NewOrderService(mockRepo, mockBroker)
+	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-fail-create", 2, 10.00)
+	if err == nil {
+		t.Fatal("Expected purchase to fail, but it succeeded")
+	}
+
+	if !errors.Is(err, ErrRefundedOrderRecordFailed) {
+		t.Errorf("Expected error to wrap ErrRefundedOrderRecordFailed, got %v", err)
+	}
+
+	if !errors.Is(err, dbErr) {
+		t.Errorf("Expected error to wrap underlying database error %v, got %v", dbErr, err)
+	}
+
+	if !restoreCalled {
+		t.Error("Expected RestoreStock to be called")
+	}
+
+	if !refundCalled {
+		t.Error("Expected Refund to be called")
+	}
+}
