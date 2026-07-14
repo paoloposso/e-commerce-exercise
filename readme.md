@@ -88,6 +88,24 @@ If a user clicks "Buy Now" and their WiFi drops before they get the success mess
 **Why Embed?**
 *   **Reason:** We utilize Go's `//go:embed` directive. The Dockerfile builds the React frontend and deposits it into the Go source tree. The Go compiler then bakes the HTML/CSS/JS directly into the binary. This eliminates the need for an Nginx proxy or a complex two-container Docker setup.
 
+### 5. Repository Pattern & Database Decoupling
+**Why this pattern?**
+
+The codebase separates persistence concerns using the **Repository Pattern** with clear interface boundaries:
+
+- **`services/product_repository.go`** — Declares the `ProductRepository` interface with methods for CRUD, stock management, and bulk import. The service layer only knows about this interface; it has no knowledge of SQL, SQLite, or any specific database.
+- **`services/order_repository.go`** — Declares the `OrderRepository` interface covering order-specific operations only.
+- **`repository/sqlite_product_repository.go`** & **`repository/sqlite_order.go`** — Concrete SQLite implementations of the above interfaces.
+
+This means **switching the database engine** (e.g., to PostgreSQL or MySQL) only requires:
+1. Writing a new implementation of `ProductRepository` and `OrderRepository`.
+2. Updating the two lines in `main.go` that instantiate the repositories.
+
+No changes to services, handlers, or business logic are needed.
+
+**CSV Import decoupling:**
+The `csv_importer.go` service is intentionally unaware of transaction boundaries. It parses and validates CSV rows in memory, then delegates the entire persistence operation — including starting a transaction, batch-inserting new products, updating existing ones, and committing — to a single `ImportProducts(ctx, products)` call on the repository. This keeps the service layer free of any database-level concerns.
+
 ---
 
 ## 🔌 API Endpoints
