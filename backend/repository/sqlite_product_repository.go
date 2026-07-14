@@ -175,10 +175,7 @@ func (r *SQLiteProductRepository) GetBySKUs(ctx context.Context, skus []string) 
 	chunkSize := 990
 	var allProducts []models.Product
 	for i := 0; i < len(skus); i += chunkSize {
-		end := i + chunkSize
-		if end > len(skus) {
-			end = len(skus)
-		}
+		end := min(i+chunkSize, len(skus))
 		chunk := skus[i:end]
 
 		placeholders := make([]string, len(chunk))
@@ -225,10 +222,7 @@ func (r *SQLiteProductRepository) BulkCreate(ctx context.Context, products []*mo
 
 	batchSize := 100
 	for i := 0; i < len(products); i += batchSize {
-		end := i + batchSize
-		if end > len(products) {
-			end = len(products)
-		}
+		end := min(i+batchSize, len(products))
 		batch := products[i:end]
 
 		var query strings.Builder
@@ -371,4 +365,3 @@ func (r *SQLiteProductRepository) RestoreStock(ctx context.Context, sku string, 
 	)
 	return err
 }
-
