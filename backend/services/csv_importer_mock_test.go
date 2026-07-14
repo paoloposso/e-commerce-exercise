@@ -9,10 +9,10 @@ import (
 )
 
 type mockImporterRepository struct {
-	importProductsFn func(ctx context.Context, products []models.Product) (int, int, error)
+	importProductsFn func(ctx context.Context, products []models.Product) error
 }
 
-func (m *mockImporterRepository) ImportProducts(ctx context.Context, products []models.Product) (int, int, error) {
+func (m *mockImporterRepository) ImportProducts(ctx context.Context, products []models.Product) error {
 	return m.importProductsFn(ctx, products)
 }
 
@@ -20,9 +20,9 @@ func TestImportProductsFromCSV_Mocked(t *testing.T) {
 	var importedProducts []models.Product
 
 	mockRepo := &mockImporterRepository{
-		importProductsFn: func(ctx context.Context, products []models.Product) (int, int, error) {
+		importProductsFn: func(ctx context.Context, products []models.Product) error {
 			importedProducts = products
-			return 1, 1, nil
+			return nil
 		},
 	}
 
@@ -39,14 +39,6 @@ Duplicate Mock Product,SKU-DUP,Updated mock details,Mocking,29.99,100,1.2
 
 	if report.TotalRows != 2 {
 		t.Errorf("Expected 2 processed rows, got %d", report.TotalRows)
-	}
-
-	if report.ImportedRows != 1 {
-		t.Errorf("Expected 1 imported product, got report: %d", report.ImportedRows)
-	}
-
-	if report.UpdatedRows != 1 {
-		t.Errorf("Expected 1 updated product, got report: %d", report.UpdatedRows)
 	}
 
 	if len(report.Errors) != 0 {

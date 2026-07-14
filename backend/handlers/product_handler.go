@@ -70,7 +70,12 @@ func (h *ProductHandler) ImportProducts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, report)
+	if len(report.Errors) > 0 {
+		writeJSON(w, http.StatusOK, report)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int{"total_rows": report.TotalRows})
 }
 
 func (h *ProductHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {

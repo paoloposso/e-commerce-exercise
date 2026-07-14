@@ -6,7 +6,7 @@ import (
 )
 
 type ProductImporterStore interface {
-	ImportProducts(ctx context.Context, products []models.Product) (imported int, updated int, err error)
+	ImportProducts(ctx context.Context, products []models.Product) error
 }
 
 type ProductRepository interface {

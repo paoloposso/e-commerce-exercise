@@ -46,16 +46,12 @@ func main() {
 		port = "8080"
 	}
 
-	// Initialize database connection
 	dbHandle, err := repository.ConnectSQLiteDb(dbPath)
 	if err != nil {
 		log.Fatalf("Database connection failed: %v", err)
 	}
 	defer dbHandle.Close()
 
-	// Instantiate repository layer
-	// To switch database engines (e.g., to PostgreSQL or MySQL), you can swap these SQLite-specific
-	// implementations with other concrete repository implementations that satisfy the services layer's interfaces.
 	productRepo := repository.NewSQLiteProductRepository(dbHandle)
 	orderRepo := repository.NewSQLiteOrderRepository(dbHandle)
 
@@ -80,7 +76,7 @@ func main() {
 			if err != nil {
 				log.Printf("Warning: Failed to seed database: %v", err)
 			} else {
-				log.Printf("Database seeded successfully with %d products.", report.ImportedRows)
+				log.Printf("Database seeded successfully with %d products.", report.TotalRows)
 			}
 		}
 	}

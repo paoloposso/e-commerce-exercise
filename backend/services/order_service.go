@@ -158,7 +158,6 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 				createOrderErr = ctx.Err()
 				rAttempt = 3
 			case <-time.After(time.Duration(rAttempt*100) * time.Millisecond):
-				// continue to next retry
 			}
 		}
 	}

@@ -21,10 +21,8 @@ type RowError struct {
 }
 
 type ImportReport struct {
-	TotalRows    int        `json:"total_rows"`
-	ImportedRows int        `json:"imported_rows"`
-	UpdatedRows  int        `json:"updated_rows"`
-	Errors       []RowError `json:"errors"`
+	TotalRows int        `json:"total_rows"`
+	Errors    []RowError `json:"errors"`
 }
 
 func GenerateUUID() string {
@@ -58,7 +56,19 @@ func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductIm
 		Errors: []RowError{},
 	}
 
-	var validProducts []models.Product
+	const batchSize = 500
+	var batch []models.Product
+
+	flushBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := repo.ImportProducts(ctx, batch); err != nil {
+			return fmt.Errorf("bulk import failed: %w", err)
+		}
+		batch = batch[:0]
+		return nil
+	}
 
 	rowNum := 1
 	for {
@@ -121,8 +131,7 @@ func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductIm
 			continue
 		}
 
-		cleanPriceVal := strings.ReplaceAll(priceVal, "$", "")
-		cleanPriceVal = strings.TrimSpace(cleanPriceVal)
+		cleanPriceVal := strings.TrimSpace(strings.ReplaceAll(priceVal, "$", ""))
 
 		var price float64
 		if strings.ToLower(cleanPriceVal) == "free" {
@@ -148,7 +157,6 @@ func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductIm
 			price = p
 		}
 
-		var stock int
 		s, err := strconv.Atoi(stockVal)
 		if err != nil {
 			report.Errors = append(report.Errors, RowError{
@@ -166,7 +174,6 @@ func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductIm
 			})
 			continue
 		}
-		stock = s
 
 		var weight float64
 		if weightVal != "" {
@@ -188,34 +195,30 @@ func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductIm
 				continue
 			}
 			weight = w
-		} else {
-			weight = 0.0
 		}
 
-		product := models.Product{
+		batch = append(batch, models.Product{
 			Name:        nameVal,
 			SKU:         skuVal,
 			Description: descVal,
 			Category:    catVal,
 			Price:       price,
-			Stock:       stock,
+			Stock:       s,
 			WeightKg:    weight,
-		}
+		})
 
-		validProducts = append(validProducts, product)
+		if len(batch) >= batchSize {
+			if err := flushBatch(); err != nil {
+				return nil, err
+			}
+		}
 	}
 
-	if len(validProducts) > 0 {
-		imported, updated, err := repo.ImportProducts(ctx, validProducts)
-		if err != nil {
-			return nil, fmt.Errorf("bulk import failed: %w", err)
-		}
-		report.ImportedRows = imported
-		report.UpdatedRows = updated
+	if err := flushBatch(); err != nil {
+		return nil, err
 	}
 
-	log.Printf("CSV Import completed. Total rows: %d, Imported: %d, Updated: %d, Errors: %d",
-		report.TotalRows, report.ImportedRows, report.UpdatedRows, len(report.Errors))
+	log.Printf("CSV Import completed. Total rows: %d, Errors: %d", report.TotalRows, len(report.Errors))
 
 	return report, nil
 }

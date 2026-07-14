@@ -103,8 +103,9 @@ This means **switching the database engine** (e.g., to PostgreSQL or MySQL) only
 
 No changes to services, handlers, or business logic are needed.
 
-**CSV Import decoupling:**
-The `csv_importer.go` service is intentionally unaware of transaction boundaries. It parses and validates CSV rows in memory, then delegates the entire persistence operation — including starting a transaction, batch-inserting new products, updating existing ones, and committing — to a single `ImportProducts(ctx, products)` call on the repository. This keeps the service layer free of any database-level concerns.
+**CSV Import Performance & Decoupling:**
+The `csv_importer.go` service is designed for extreme scale and low memory usage. Instead of reading the entire CSV into memory (which could crash the server on large files), it **streams** the file row by row and flushes batches of 500 valid rows to the repository layer.
+Furthermore, the importer is completely unaware of database transaction boundaries. It delegates the persistence operation to a single `ImportProducts(ctx, products)` call on the repository. The SQLite repository handles this batch efficiently using a single **UPSERT (`ON CONFLICT(sku) DO UPDATE`)** statement inside a transaction, keeping DB round-trips to an absolute minimum while keeping the service layer completely persistence-agnostic.
 
 ---
 

@@ -62,11 +62,7 @@ func (r *SQLiteProductRepository) List(ctx context.Context, query, category stri
 		products = append(products, p)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return products, nil
+	return products, rows.Err()
 }
 
 func (r *SQLiteProductRepository) GetByID(ctx context.Context, id string) (*models.Product, error) {
@@ -112,7 +108,6 @@ func (r *SQLiteProductRepository) Update(ctx context.Context, id string, p *mode
 	if err != nil {
 		return err
 	}
-
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return err
@@ -128,7 +123,6 @@ func (r *SQLiteProductRepository) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return err
@@ -137,6 +131,29 @@ func (r *SQLiteProductRepository) Delete(ctx context.Context, id string) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (r *SQLiteProductRepository) TryDecrementStock(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error) {
+	result, err := r.db.ExecContext(ctx,
+		"UPDATE products SET stock = stock - ?, version = version + 1 WHERE sku = ? AND version = ? AND stock >= ?",
+		quantity, sku, expectedVersion, quantity,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to decrement stock: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected == 1, nil
+}
+
+func (r *SQLiteProductRepository) RestoreStock(ctx context.Context, sku string, quantity int) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE products SET stock = stock + ?, version = version + 1 WHERE sku = ?",
+		quantity, sku,
+	)
+	return err
 }
 
 type sqliteProductRepositoryTx struct {
@@ -167,201 +184,58 @@ func (r *SQLiteProductRepository) beginTx(ctx context.Context) (*sqliteProductRe
 	}, nil
 }
 
-func (r *SQLiteProductRepository) GetBySKUs(ctx context.Context, skus []string) ([]models.Product, error) {
-	if len(skus) == 0 {
-		return nil, nil
-	}
-
-	chunkSize := 990
-	var allProducts []models.Product
-	for i := 0; i < len(skus); i += chunkSize {
-		end := min(i+chunkSize, len(skus))
-		chunk := skus[i:end]
-
-		placeholders := make([]string, len(chunk))
-		args := make([]any, len(chunk))
-		for j, sku := range chunk {
-			placeholders[j] = "?"
-			args[j] = sku
-		}
-
-		query := fmt.Sprintf(
-			"SELECT id, name, sku, description, category, price, stock, weight_kg, version FROM products WHERE sku IN (%s)",
-			strings.Join(placeholders, ","),
-		)
-
-		rows, err := r.db.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-
-		err = func() error {
-			defer rows.Close()
-			for rows.Next() {
-				var p models.Product
-				err := rows.Scan(&p.ID, &p.Name, &p.SKU, &p.Description, &p.Category, &p.Price, &p.Stock, &p.WeightKg, &p.Version)
-				if err != nil {
-					return err
-				}
-				allProducts = append(allProducts, p)
-			}
-			return rows.Err()
-		}()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return allProducts, nil
-}
-
-func (r *SQLiteProductRepository) BulkCreate(ctx context.Context, products []*models.Product) error {
+func (r *SQLiteProductRepository) ImportProducts(ctx context.Context, products []models.Product) error {
 	if len(products) == 0 {
 		return nil
 	}
 
-	batchSize := 100
-	for i := 0; i < len(products); i += batchSize {
-		end := min(i+batchSize, len(products))
-		batch := products[i:end]
-
-		var query strings.Builder
-		query.WriteString("INSERT INTO products (id, name, sku, description, category, price, stock, weight_kg) VALUES ")
-		vals := []any{}
-		for j, p := range batch {
-			if p.ID == "" {
-				p.ID = generateUUID()
-			}
-			if j > 0 {
-				query.WriteString(", ")
-			}
-			query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?)")
-			vals = append(vals, p.ID, p.Name, p.SKU, p.Description, p.Category, p.Price, p.Stock, p.WeightKg)
-		}
-
-		_, err := r.db.ExecContext(ctx, query.String(), vals...)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *SQLiteProductRepository) ImportProducts(ctx context.Context, products []models.Product) (int, int, error) {
-	if len(products) == 0 {
-		return 0, 0, nil
-	}
-
 	tx, err := r.beginTx(ctx)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Extract unique SKUs
-	var uniqueSKUs []string
-	uniqueSKUsMap := make(map[string]bool)
-	for _, p := range products {
-		if !uniqueSKUsMap[p.SKU] {
-			uniqueSKUsMap[p.SKU] = true
-			uniqueSKUs = append(uniqueSKUs, p.SKU)
-		}
-	}
+	const paramsPerRow = 8
+	const chunkSize = 999 / paramsPerRow
 
-	// Fetch existing products
-	existingList, err := tx.GetBySKUs(ctx, uniqueSKUs)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to fetch existing products: %w", err)
-	}
+	for i := 0; i < len(products); i += chunkSize {
+		end := min(i+chunkSize, len(products))
+		batch := products[i:end]
 
-	existingMap := make(map[string]*models.Product)
-	for i := range existingList {
-		existingMap[existingList[i].SKU] = &existingList[i]
-	}
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO products (id, name, sku, description, category, price, stock, weight_kg) VALUES ")
+		vals := make([]any, 0, len(batch)*paramsPerRow)
 
-	// Classify and simulate row-by-row counts
-	seenSKUs := make(map[string]bool)
-	finalProducts := make(map[string]models.Product)
-	var insertSKUs []string
-	var updateSKUs []string
-
-	importedCount := 0
-	updatedCount := 0
-
-	for _, p := range products {
-		sku := p.SKU
-		existing, inDB := existingMap[sku]
-
-		if !seenSKUs[sku] {
-			seenSKUs[sku] = true
-			if inDB {
-				p.ID = existing.ID
-				finalProducts[sku] = p
-				updateSKUs = append(updateSKUs, sku)
-				updatedCount++
-			} else {
-				p.ID = generateUUID()
-				finalProducts[sku] = p
-				insertSKUs = append(insertSKUs, sku)
-				importedCount++
+		for j, p := range batch {
+			if j > 0 {
+				sb.WriteString(", ")
 			}
-		} else {
-			p.ID = finalProducts[sku].ID
-			finalProducts[sku] = p
-			updatedCount++
+			sb.WriteString("(?, ?, ?, ?, ?, ?, ?, ?)")
+			id := p.ID
+			if id == "" {
+				id = generateUUID()
+			}
+			vals = append(vals, id, p.Name, p.SKU, p.Description, p.Category, p.Price, p.Stock, p.WeightKg)
 		}
-	}
 
-	// Bulk Create new products
-	var productsToInsert []*models.Product
-	for _, sku := range insertSKUs {
-		p := finalProducts[sku]
-		productsToInsert = append(productsToInsert, &p)
-	}
-	if len(productsToInsert) > 0 {
-		err = tx.BulkCreate(ctx, productsToInsert)
+		sb.WriteString(` ON CONFLICT(sku) DO UPDATE SET
+			name        = excluded.name,
+			description = excluded.description,
+			category    = excluded.category,
+			price       = excluded.price,
+			stock       = excluded.stock,
+			weight_kg   = excluded.weight_kg,
+			version     = version + 1`)
+
+		_, err := tx.db.ExecContext(ctx, sb.String(), vals...)
 		if err != nil {
-			return 0, 0, fmt.Errorf("bulk insert failed: %w", err)
+			return fmt.Errorf("upsert failed: %w", err)
 		}
 	}
 
-	// Update existing products
-	for _, sku := range updateSKUs {
-		p := finalProducts[sku]
-		err = tx.Update(ctx, p.ID, &p)
-		if err != nil {
-			return 0, 0, fmt.Errorf("update failed for sku %s: %w", sku, err)
-		}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Commit Transaction
-	err = tx.Commit()
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return importedCount, updatedCount, nil
-}
-
-func (r *SQLiteProductRepository) TryDecrementStock(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error) {
-	result, err := r.db.ExecContext(ctx,
-		"UPDATE products SET stock = stock - ?, version = version + 1 WHERE sku = ? AND version = ? AND stock >= ?",
-		quantity, sku, expectedVersion, quantity,
-	)
-	if err != nil {
-		return false, fmt.Errorf("failed to decrement stock: %w", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rowsAffected == 1, nil
-}
-
-func (r *SQLiteProductRepository) RestoreStock(ctx context.Context, sku string, quantity int) error {
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE products SET stock = stock + ?, version = version + 1 WHERE sku = ?",
-		quantity, sku,
-	)
-	return err
+	return nil
 }
