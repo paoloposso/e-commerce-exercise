@@ -12,7 +12,7 @@ import (
 
 func TestImportProductsFromCSV_Integration(t *testing.T) {
 	testDBPath := "test_ecommerce.db"
-	dbHandle, err := repository.ConnectDB(testDBPath)
+	dbHandle, err := repository.ConnectSQLiteDb(testDBPath)
 	if err != nil {
 		t.Fatalf("Failed to initialize test SQLite DB: %v", err)
 	}
@@ -70,5 +70,65 @@ Product with Missing SKU, ,No sku value provided,Outdoors,150.00,8,4.2
 		if !strings.Contains(e.Error, expectedMsg) {
 			t.Errorf("Expected row %d error to contain '%s', but got '%s'", e.RowNumber, expectedMsg, e.Error)
 		}
+	}
+}
+
+func TestImportProductsFromCSV_DuplicateSKUs_Integration(t *testing.T) {
+	testDBPath := "test_duplicate_ecommerce.db"
+	dbHandle, err := repository.ConnectSQLiteDb(testDBPath)
+	if err != nil {
+		t.Fatalf("Failed to initialize test SQLite DB: %v", err)
+	}
+	defer func() {
+		_ = dbHandle.Close()
+		_ = os.Remove(testDBPath)
+	}()
+
+	productRepo := repository.NewSQLiteProductRepository(dbHandle)
+
+	csvData := `name,sku,description,category,price,stock,weight_kg
+New Item,SKU-001,First description,Electronics,10.00,5,1.0
+Updated Item,SKU-001,Second description,Electronics,12.00,10,1.2
+Another Item,SKU-002,Item 2 description,Home,20.00,2,0.5
+Another Updated,SKU-002,Item 2 second description,Home,22.00,4,0.6
+`
+
+	buf := bytes.NewBufferString(csvData)
+	report, err := ImportProductsFromCSV(context.Background(), buf, productRepo)
+	if err != nil {
+		t.Fatalf("ImportProductsFromCSV failed: %v", err)
+	}
+
+	if report.TotalRows != 4 {
+		t.Errorf("Expected 4 total rows, got %d", report.TotalRows)
+	}
+
+	if report.ImportedRows != 2 {
+		t.Errorf("Expected 2 imported products, got %d", report.ImportedRows)
+	}
+	if report.UpdatedRows != 2 {
+		t.Errorf("Expected 2 updated products, got %d", report.UpdatedRows)
+	}
+
+	p1, err := productRepo.GetBySKU(context.Background(), "SKU-001")
+	if err != nil {
+		t.Fatalf("GetBySKU SKU-001 failed: %v", err)
+	}
+	if p1 == nil {
+		t.Fatalf("Expected SKU-001 to exist")
+	}
+	if p1.Name != "Updated Item" || p1.Price != 12.00 || p1.Stock != 10 {
+		t.Errorf("SKU-001 did not have expected final values: %+v", p1)
+	}
+
+	p2, err := productRepo.GetBySKU(context.Background(), "SKU-002")
+	if err != nil {
+		t.Fatalf("GetBySKU SKU-002 failed: %v", err)
+	}
+	if p2 == nil {
+		t.Fatalf("Expected SKU-002 to exist")
+	}
+	if p2.Name != "Another Updated" || p2.Price != 22.00 || p2.Stock != 4 {
+		t.Errorf("SKU-002 did not have expected final values: %+v", p2)
 	}
 }

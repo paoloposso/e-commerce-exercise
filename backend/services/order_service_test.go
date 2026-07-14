@@ -56,6 +56,40 @@ func defaultBroker() payment.Broker {
 	return &payment.MockBroker{}
 }
 
+type mockProductRepositoryForOrder struct {
+	ProductRepository
+	getBySKUFn          func(ctx context.Context, sku string) (*models.Product, error)
+	tryDecrementStockFn func(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error)
+	restoreStockFn      func(ctx context.Context, sku string, quantity int) error
+}
+
+func (m *mockProductRepositoryForOrder) GetBySKU(ctx context.Context, sku string) (*models.Product, error) {
+	if m.getBySKUFn != nil {
+		return m.getBySKUFn(ctx, sku)
+	}
+	return nil, nil
+}
+func (m *mockProductRepositoryForOrder) TryDecrementStock(ctx context.Context, sku string, quantity, expectedVersion int) (bool, error) {
+	if m.tryDecrementStockFn != nil {
+		return m.tryDecrementStockFn(ctx, sku, quantity, expectedVersion)
+	}
+	return true, nil
+}
+func (m *mockProductRepositoryForOrder) RestoreStock(ctx context.Context, sku string, quantity int) error {
+	if m.restoreStockFn != nil {
+		return m.restoreStockFn(ctx, sku, quantity)
+	}
+	return nil
+}
+
+func newMockProductRepository(m *mockOrderRepository) *mockProductRepositoryForOrder {
+	return &mockProductRepositoryForOrder{
+		getBySKUFn:          m.getBySKUFn,
+		tryDecrementStockFn: m.tryDecrementStockFn,
+		restoreStockFn:      m.restoreStockFn,
+	}
+}
+
 func TestPurchaseProduct_PaymentDeclined(t *testing.T) {
 	product := &models.Product{ID: "p1", SKU: "SKU-001", Price: 10.00, Stock: 5, Version: 1}
 
@@ -79,7 +113,7 @@ func TestPurchaseProduct_PaymentDeclined(t *testing.T) {
 		},
 	}
 
-	service := NewOrderService(mockRepo, declinedBroker)
+	service := NewOrderService(mockRepo, newMockProductRepository(mockRepo), declinedBroker)
 	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-decline", 2, 10.00)
 	if !errors.Is(err, ErrPaymentDeclined) {
 		t.Errorf("Expected ErrPaymentDeclined, got %v", err)
@@ -103,7 +137,7 @@ func TestPurchaseProduct_CASConflictExhaustRetries(t *testing.T) {
 		},
 	}
 
-	service := NewOrderService(mockRepo, defaultBroker())
+	service := NewOrderService(mockRepo, newMockProductRepository(mockRepo), defaultBroker())
 	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-cas", 2, 10.00)
 	if !errors.Is(err, ErrConcurrencyConflict) {
 		t.Errorf("Expected ErrConcurrencyConflict, got %v", err)
@@ -122,7 +156,7 @@ func TestPurchaseProduct_InsufficientStock(t *testing.T) {
 		},
 	}
 
-	service := NewOrderService(mockRepo, defaultBroker())
+	service := NewOrderService(mockRepo, newMockProductRepository(mockRepo), defaultBroker())
 	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-nostock", 5, 10.00)
 	if !errors.Is(err, ErrInsufficientStock) {
 		t.Errorf("Expected ErrInsufficientStock, got %v", err)
@@ -138,7 +172,7 @@ func TestPurchaseProduct_PriceChanged(t *testing.T) {
 		},
 	}
 
-	service := NewOrderService(mockRepo, defaultBroker())
+	service := NewOrderService(mockRepo, newMockProductRepository(mockRepo), defaultBroker())
 	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-price", 2, 10.00)
 	if !errors.Is(err, ErrPriceChanged) {
 		t.Errorf("Expected ErrPriceChanged, got %v", err)
@@ -157,7 +191,7 @@ func TestPurchaseProduct_IdempotencyReplay(t *testing.T) {
 		},
 	}
 
-	service := NewOrderService(mockRepo, defaultBroker())
+	service := NewOrderService(mockRepo, newMockProductRepository(mockRepo), defaultBroker())
 	order, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-replay", 2, 10.00)
 	if err != nil {
 		t.Fatalf("Expected nil error on idempotent replay, got %v", err)
@@ -199,7 +233,7 @@ func TestPurchaseProduct_CreateOrderFailRefundSuccess(t *testing.T) {
 		},
 	}
 
-	service := NewOrderService(mockRepo, mockBroker)
+	service := NewOrderService(mockRepo, newMockProductRepository(mockRepo), mockBroker)
 	_, err := service.PurchaseProduct(context.Background(), "SKU-001", "customer-1", "idem-key-fail-create", 2, 10.00)
 	if err == nil {
 		t.Fatal("Expected purchase to fail, but it succeeded")

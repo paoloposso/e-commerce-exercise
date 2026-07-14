@@ -23,12 +23,13 @@ var (
 var errCASConflict = errors.New("cas conflict: product version changed during checkout")
 
 type OrderService struct {
-	repo    OrderRepository
-	payment payment.Broker
+	orderRepo   OrderRepository
+	productRepo ProductRepository
+	payment     payment.Broker
 }
 
-func NewOrderService(repo OrderRepository, broker payment.Broker) *OrderService {
-	return &OrderService{repo: repo, payment: broker}
+func NewOrderService(orderRepo OrderRepository, productRepo ProductRepository, broker payment.Broker) *OrderService {
+	return &OrderService{orderRepo: orderRepo, productRepo: productRepo, payment: broker}
 }
 
 func (s *OrderService) PurchaseProduct(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
@@ -45,7 +46,7 @@ func (s *OrderService) PurchaseProduct(ctx context.Context, sku, customerID, ide
 		return nil, fmt.Errorf("%w: idempotency_key is required to prevent duplicate orders", ErrInvalidInput)
 	}
 
-	existing, err := s.repo.GetOrderByIdempotencyKey(ctx, idempotencyKey)
+	existing, err := s.orderRepo.GetOrderByIdempotencyKey(ctx, idempotencyKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check idempotency key: %w", err)
 	}
@@ -82,7 +83,7 @@ func (s *OrderService) PurchaseProduct(ctx context.Context, sku, customerID, ide
 }
 
 func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempotencyKey string, quantity int, expectedPrice float64) (*models.Order, error) {
-	product, err := s.repo.GetBySKU(ctx, sku)
+	product, err := s.productRepo.GetBySKU(ctx, sku)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +99,7 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 		return nil, fmt.Errorf("%w: requested %d, available %d", ErrInsufficientStock, quantity, product.Stock)
 	}
 
-	ok, err := s.repo.TryDecrementStock(ctx, sku, quantity, product.Version)
+	ok, err := s.productRepo.TryDecrementStock(ctx, sku, quantity, product.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +121,7 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 	if err != nil || (payResult != nil && payResult.Status != "approved") {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.repo.RestoreStock(cleanupCtx, sku, quantity)
+		_ = s.productRepo.RestoreStock(cleanupCtx, sku, quantity)
 
 		if errors.Is(err, payment.ErrDeclined) || (payResult != nil && payResult.Status == "declined") {
 			return nil, ErrPaymentDeclined
@@ -146,7 +147,7 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 
 	var createOrderErr error
 	for rAttempt := 1; rAttempt <= 3; rAttempt++ {
-		createOrderErr = s.repo.CreateOrder(finalizationCtx, order)
+		createOrderErr = s.orderRepo.CreateOrder(finalizationCtx, order)
 		if createOrderErr == nil {
 			break
 		}
@@ -163,7 +164,7 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 	}
 
 	if createOrderErr != nil {
-		_ = s.repo.RestoreStock(finalizationCtx, sku, quantity)
+		_ = s.productRepo.RestoreStock(finalizationCtx, sku, quantity)
 		
 		txnID := orderID
 		if payResult != nil && payResult.TransactionID != "" {
@@ -182,5 +183,5 @@ func (s *OrderService) tryPurchase(ctx context.Context, sku, customerID, idempot
 }
 
 func (s *OrderService) ListOrders(ctx context.Context) ([]models.Order, error) {
-	return s.repo.ListOrders(ctx)
+	return s.orderRepo.ListOrders(ctx)
 }

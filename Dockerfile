@@ -10,8 +10,6 @@ RUN npx vite build --outDir dist
 FROM golang:1.22-alpine AS backend-builder
 WORKDIR /app/backend
 
-RUN apk add --no-cache gcc musl-dev
-
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
@@ -20,7 +18,7 @@ COPY backend/ ./
 RUN mkdir -p cmd/api/dist
 COPY --from=frontend-builder /app/frontend/dist/ ./cmd/api/dist/
 
-RUN go build -o /api-server ./cmd/api/main.go
+RUN CGO_ENABLED=0 go build -o /api-server ./cmd/api/main.go
 
 FROM alpine:latest
 WORKDIR /app

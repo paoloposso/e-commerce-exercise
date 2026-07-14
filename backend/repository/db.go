@@ -8,7 +8,7 @@ import (
 	_ "github.com/glebarez/go-sqlite"
 )
 
-func ConnectDB(dbPath string) (*sql.DB, error) {
+func ConnectSQLiteDb(dbPath string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)

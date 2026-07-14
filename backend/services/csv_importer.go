@@ -10,7 +10,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"ecommerce/backend/models"
 )
@@ -58,6 +57,8 @@ func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductIm
 	report := &ImportReport{
 		Errors: []RowError{},
 	}
+
+	var validProducts []models.Product
 
 	rowNum := 1
 	for {
@@ -201,45 +202,16 @@ func ImportProductsFromCSV(ctx context.Context, reader io.Reader, repo ProductIm
 			WeightKg:    weight,
 		}
 
-		rowCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		validProducts = append(validProducts, product)
+	}
 
-		existingProduct, err := repo.GetBySKU(rowCtx, product.SKU)
+	if len(validProducts) > 0 {
+		imported, updated, err := repo.ImportProducts(ctx, validProducts)
 		if err != nil {
-			report.Errors = append(report.Errors, RowError{
-				RowNumber: rowNum,
-				SKU:       skuVal,
-				Error:     fmt.Sprintf("Database query failed: %v", err),
-			})
-			cancel()
-			continue
+			return nil, fmt.Errorf("bulk import failed: %w", err)
 		}
-
-		if existingProduct == nil {
-			err = repo.Create(rowCtx, &product)
-			if err != nil {
-				report.Errors = append(report.Errors, RowError{
-					RowNumber: rowNum,
-					SKU:       skuVal,
-					Error:     fmt.Sprintf("Database insert failed: %v", err),
-				})
-				cancel()
-				continue
-			}
-			report.ImportedRows++
-		} else {
-			err = repo.Update(rowCtx, existingProduct.ID, &product)
-			if err != nil {
-				report.Errors = append(report.Errors, RowError{
-					RowNumber: rowNum,
-					SKU:       skuVal,
-					Error:     fmt.Sprintf("Database update failed: %v", err),
-				})
-				cancel()
-				continue
-			}
-			report.UpdatedRows++
-		}
-		cancel()
+		report.ImportedRows = imported
+		report.UpdatedRows = updated
 	}
 
 	log.Printf("CSV Import completed. Total rows: %d, Imported: %d, Updated: %d, Errors: %d",
